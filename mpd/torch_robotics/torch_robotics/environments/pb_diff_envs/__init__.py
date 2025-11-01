@@ -1,0 +1,2 @@
+from .static.env_rand_maze2d import EnvRandMaze2D
+from .static.wgrp_rand_maze2d import Maze2DRandRecGroupList
