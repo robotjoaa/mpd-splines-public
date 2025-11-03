@@ -2,84 +2,84 @@ import torch
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import List, Callable, Optional
-from torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
-from torch_robotics.environments.dynamic_extension.moving_primitives import MovingObjectField
-from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
+from mpd.torch_robotics.torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
+#from mpd.torch_robotics.torch_robotics.environments.dynamic_extension.moving_primitives import MovingObjectField
+from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
 
 
 '''
     Migrated from pb_diff
 '''
 
-class AbstractTrajectory(ABC):
-    @abstractmethod
-    def get_spec(self, t):
-        raise NotImplementedError  
+# class AbstractTrajectory(ABC):
+#     @abstractmethod
+#     def get_spec(self, t):
+#         raise NotImplementedError  
         
-    @abstractmethod
-    def set_spec(self, obstacle, t):
-        raise NotImplementedError
+#     @abstractmethod
+#     def set_spec(self, obstacle, t):
+#         raise NotImplementedError
 
-# class WaypointDiscreteTrajectory(AbstractTrajectory):
+# # class WaypointDiscreteTrajectory(AbstractTrajectory):
+# #     '''
+# #     following the waypoints moving in discrete time
+# #     '''
+    
+# #     def __init__(self, waypoints):
+# #         self.waypoints = waypoints
+
+# #     def get_spec(self, t):
+# #         assert isinstance(t, int)
+# #         if t != -1:
+# #             assert 0<=t<=(len(self.waypoints)-1)
+# #         return self.waypoints[t]
+        
+# #     def set_spec(self, obstacle, spec):
+# #         obstacle.set_config(spec)
+        
+        
+# class WaypointLinearTrajectory(AbstractTrajectory):
 #     '''
-#     following the waypoints moving in discrete time
+#     following the waypoints moving in continuous time
+#     the motion is linear between adjacent timesteps
 #     '''
     
-#     def __init__(self, waypoints):
+#     def __init__(self, waypoints, noise_config={}):
+#         assert type(waypoints) == np.ndarray or type(waypoints) == list
 #         self.waypoints = waypoints
+#         self.noisy = len(noise_config) > 0
+#         self.noise_config = noise_config
 
 #     def get_spec(self, t):
-#         assert isinstance(t, int)
-#         if t != -1:
-#             assert 0<=t<=(len(self.waypoints)-1)
-#         return self.waypoints[t]
-        
-#     def set_spec(self, obstacle, spec):
-#         obstacle.set_config(spec)
-        
-        
-class WaypointLinearTrajectory(AbstractTrajectory):
-    '''
-    following the waypoints moving in continuous time
-    the motion is linear between adjacent timesteps
-    '''
-    
-    def __init__(self, waypoints, noise_config={}):
-        assert type(waypoints) == np.ndarray or type(waypoints) == list
-        self.waypoints = waypoints
-        self.noisy = len(noise_config) > 0
-        self.noise_config = noise_config
+#         '''impl abstract method
+#         t (float or int): should be [0, len(waypoints)]
+#         do linear interp to get traj
+#         return: 
+#         np
+#         '''
+#         if t == -1 or t >= len(self.waypoints)-1:
+#             return self.waypoints[-1]
+#         # if t != -1:
+#         #     assert 0<=t<=(len(self.waypoints)-1)
+#         t_prev, t_next = int(np.floor(t)), int(np.ceil(t))
+#         # print('t', t, t_prev, t_next)
+#         spec_prev, spec_next = self.waypoints[t_prev], self.waypoints[t_next]
+#         spec_interp = spec_prev + (spec_next-spec_prev)*(t-t_prev)
+#         if self.noisy and t > 0:
+#             spec_interp = spec_interp + np.random.randn(*spec_interp.shape) * self.noise_config['std']
 
-    def get_spec(self, t):
-        '''impl abstract method
-        t (float or int): should be [0, len(waypoints)]
-        do linear interp to get traj
-        return: 
-        np
-        '''
-        if t == -1 or t >= len(self.waypoints)-1:
-            return self.waypoints[-1]
-        # if t != -1:
-        #     assert 0<=t<=(len(self.waypoints)-1)
-        t_prev, t_next = int(np.floor(t)), int(np.ceil(t))
-        # print('t', t, t_prev, t_next)
-        spec_prev, spec_next = self.waypoints[t_prev], self.waypoints[t_next]
-        spec_interp = spec_prev + (spec_next-spec_prev)*(t-t_prev)
-        if self.noisy and t > 0:
-            spec_interp = spec_interp + np.random.randn(*spec_interp.shape) * self.noise_config['std']
+#         return spec_interp
 
-        return spec_interp
+#     def set_spec(self, obj_field, spec):
+#         '''impl abstract method
+#         place the obstace in new/next place one by one
+#         obstacle ()
+#         '''
 
-    def set_spec(self, obj_field, spec):
-        '''impl abstract method
-        place the obstace in new/next place one by one
-        obstacle ()
-        '''
+#         assert type(obj_field) in [MovingObjectField]
 
-        assert type(obj_field) in [MovingObjectField]
-
-        # obstacle.set_config(spec)       
-        obj_field.
+#         # obstacle.set_config(spec)       
+#         obj_field.
 
         
 # class WaypointProportionTrajectory(AbstractTrajectory):

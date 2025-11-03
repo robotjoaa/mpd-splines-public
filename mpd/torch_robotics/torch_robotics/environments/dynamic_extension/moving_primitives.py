@@ -8,9 +8,9 @@ including trajectory specifications and interpolation methods.
 import torch
 import numpy as np
 from typing import List, Callable, Optional
-from torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
-from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
-from torch_robotics.environments.dynamic_extension.trajectory import TrajectoryInterpolator
+from mpd.torch_robotics.torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
+from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
+from mpd.torch_robotics.torch_robotics.environments.dynamic_extension.trajectory import TrajectoryInterpolator
 
 class MovingObjectField(ObjectField):
     """

@@ -1,33 +1,30 @@
 """
-Comprehensive test and example for time-varying SDF implementation.
+Comprehensive test for time-varying SDF with EnvDynBase wrapper pattern.
 
 This script demonstrates:
-1. Creating moving obstacles with different trajectories
-2. Building time-varying SDF grids
-3. Visualizing SDF evolution over time
-4. Integration with planning tasks
+1. Creating moving obstacles with MovingObjectField
+2. Time-dependent SDF computation with automatic object updates
+3. Smooth union handling for overlapping objects
+4. Visualizing SDF evolution over time
 """
 
 import sys
 import os
-
-# Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 import torch
 import numpy as np
+from mpd.utils.patches import numpy_monkey_patch
+numpy_monkey_patch()
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 
-from torch_robotics.environments.primitives import MultiSphereField, MultiBoxField, ObjectField
-from torch_robotics.environments.dynamic_extension.moving_primitives import (
-    LinearTrajectory, CircularTrajectory, MovingObjectField
+from mpd.torch_robotics.torch_robotics.environments.primitives import MultiSphereField, MultiBoxField, ObjectField
+from mpd.torch_robotics.torch_robotics.environments.dynamic_extension import (
+    EnvDynBase,
+    LinearTrajectory,
+    CircularTrajectory,
+    MovingObjectField,
 )
-from torch_robotics.environments.dynamic_extension.grid_map_sdf_time_varying import GridMapSDFTimeVarying
-from torch_robotics.environments.dynamic_extension.sdf_utils import (
-    smooth_union_sdf, detect_primitive_overlaps
-)
-from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_numpy
+from mpd.torch_robotics.torch_robotics.environments.dynamic_extension.sdf_utils import smooth_union_sdf
+from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_numpy
 
 
 def test_smooth_union():
@@ -50,8 +47,8 @@ def test_smooth_union():
 
     # Compute different unions
     sdf_hard = torch.minimum(sdf1, sdf2)
-    sdf_smooth_k10 = smooth_union_sdf(sdf1, sdf2, k=10.0)
-    sdf_smooth_k50 = smooth_union_sdf(sdf1, sdf2, k=50.0)
+    sdf_smooth_k10 = smooth_union_sdf(sdf1, sdf2, k=10.0, method="Quadratic")
+    sdf_smooth_k50 = smooth_union_sdf(sdf1, sdf2, k=50.0, method="Quadratic")
 
     # Visualize
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -67,61 +64,15 @@ def test_smooth_union():
         plt.colorbar(cs, ax=ax)
 
     plt.tight_layout()
-    plt.savefig('test_smooth_union.png', dpi=150)
-    print("✓ Saved smooth union comparison to test_smooth_union.png")
-
-
-# def test_overlap_detection():
-#     """Test overlap detection between primitives."""
-#     print("\n" + "="*80)
-#     print("TEST 2: Overlap Detection")
-#     print("="*80)
-
-#     tensor_args = DEFAULT_TENSOR_ARGS
-
-#     # Create primitives
-#     sphere1 = MultiSphereField(
-#         centers=np.array([[0.0, 0.0]]),
-#         radii=np.array([0.3]),
-#         tensor_args=tensor_args
-#     )
-
-#     sphere2 = MultiSphereField(
-#         centers=np.array([[0.5, 0.0]]),  # Overlaps with sphere1
-#         radii=np.array([0.3]),
-#         tensor_args=tensor_args
-#     )
-
-#     sphere3 = MultiSphereField(
-#         centers=np.array([[1.5, 0.0]]),  # No overlap
-#         radii=np.array([0.3]),
-#         tensor_args=tensor_args
-#     )
-
-#     box1 = MultiBoxField(
-#         centers=np.array([[0.0, 0.7]]),  # Overlaps with sphere1
-#         sizes=np.array([[0.4, 0.4]]),
-#         tensor_args=tensor_args
-#     )
-
-#     primitives = [sphere1, sphere2, sphere3, box1]
-
-#     # Detect overlaps
-#     overlaps, details = detect_primitive_overlaps(primitives, margin=0.0)
-
-#     print(f"Found {len(overlaps)} overlapping pairs:")
-#     for (i, j) in overlaps:
-#         print(f"  Primitive {i} ({details[(i,j)]['prim1_type']}) <-> "
-#               f"Primitive {j} ({details[(i,j)]['prim2_type']})")
-
-#     assert len(overlaps) == 2, f"Expected 2 overlaps, found {len(overlaps)}"
-#     print("✓ Overlap detection working correctly")
+    plt.savefig('/tmp/test_smooth_union.png', dpi=150)
+    print("✓ Saved smooth union comparison to /tmp/test_smooth_union.png")
+    plt.close()
 
 
 def test_moving_trajectories():
-    """Test different trajectory types."""
+    """Test different trajectory types with MovingObjectField."""
     print("\n" + "="*80)
-    print("TEST 3: Moving Object Trajectories")
+    print("TEST 2: Moving Object Trajectories")
     print("="*80)
 
     tensor_args = DEFAULT_TENSOR_ARGS
@@ -150,12 +101,12 @@ def test_moving_trajectories():
     times = torch.linspace(0, 1, 11, **tensor_args)
 
     print("\nLinear trajectory samples:")
-    for i, t in enumerate([0.0, 0.5, 1.0]):
+    for t in [0.0, 0.5, 1.0]:
         pos, _ = linear_traj(t)
         print(f"  t={t:.1f}: position = {to_numpy(pos)}")
 
     print("\nCircular trajectory samples:")
-    for i, t in enumerate([0.0, 0.25, 0.5, 0.75, 1.0]):
+    for t in [0.0, 0.25, 0.5, 0.75, 1.0]:
         pos, _ = circular_traj(t)
         print(f"  t={t:.2f}: position = {to_numpy(pos)}")
 
@@ -197,64 +148,91 @@ def test_moving_trajectories():
     ax2.set_aspect('equal')
 
     plt.tight_layout()
-    plt.savefig('test_trajectories.png', dpi=150)
-    print("✓ Saved trajectory visualization to test_trajectories.png")
+    plt.savefig('/tmp/test_trajectories.png', dpi=150)
+    print("✓ Saved trajectory visualization to /tmp/test_trajectories.png")
+    plt.close()
 
 
-def test_time_varying_sdf_grid():
-    """Test time-varying SDF grid computation."""
+def test_time_varying_sdf():
+    """Test time-varying SDF computation with MovingObjectField."""
     print("\n" + "="*80)
-    print("TEST 4: Time-Varying SDF Grid")
+    print("TEST 3: Time-Varying SDF with EnvDynBase Wrapper")
     print("="*80)
 
     tensor_args = DEFAULT_TENSOR_ARGS
 
-    def moving_objects_fn(t):
-        """Two spheres moving towards each other and overlapping."""
-        # Sphere 1: moves left to right
-        center1_x = -0.7 + 1.4 * t
-        sphere1 = MultiSphereField(
-            centers=np.array([[center1_x, 0.2]]),
-            radii=np.array([0.25]),
-            tensor_args=tensor_args
-        )
+    # Create moving sphere 1: moves left to right
+    sphere1_prim = MultiSphereField(
+        centers=np.array([[0.0, 0.0]]),
+        radii=np.array([0.25]),
+        tensor_args=tensor_args
+    )
 
-        # Sphere 2: moves right to left
-        center2_x = 0.7 - 1.4 * t
-        sphere2 = MultiSphereField(
-            centers=np.array([[center2_x, -0.2]]),
-            radii=np.array([0.25]),
-            tensor_args=tensor_args
-        )
+    traj1 = LinearTrajectory(
+        keyframe_times=[0.0, 1.0],
+        keyframe_positions=[[-0.7, 0.2, 0.0], [0.7, 0.2, 0.0]],
+        tensor_args=tensor_args
+    )
 
-        # Box: moves in circle
-        angle = 2 * np.pi * t
-        box_x = 0.5 * np.cos(angle)
-        box_y = 0.5 * np.sin(angle)
-        box = MultiBoxField(
-            centers=np.array([[box_x, box_y]]),
-            sizes=np.array([[0.2, 0.2]]),
-            tensor_args=tensor_args
-        )
+    moving_sphere1 = MovingObjectField(
+        primitive_fields=[sphere1_prim],
+        trajectory=traj1,
+        name="sphere1"
+    )
 
-        obj1 = ObjectField([sphere1], name="sphere1")
-        obj2 = ObjectField([sphere2], name="sphere2")
-        obj3 = ObjectField([box], name="box")
+    # Create moving sphere 2: moves right to left
+    sphere2_prim = MultiSphereField(
+        centers=np.array([[0.0, 0.0]]),
+        radii=np.array([0.25]),
+        tensor_args=tensor_args
+    )
 
-        return [obj1, obj2, obj3]
+    traj2 = LinearTrajectory(
+        keyframe_times=[0.0, 1.0],
+        keyframe_positions=[[0.7, -0.2, 0.0], [-0.7, -0.2, 0.0]],
+        tensor_args=tensor_args
+    )
 
-    # Create time-varying SDF grid
+    moving_sphere2 = MovingObjectField(
+        primitive_fields=[sphere2_prim],
+        trajectory=traj2,
+        name="sphere2"
+    )
+
+    # Create moving box: circular motion
+    box_prim = MultiBoxField(
+        centers=np.array([[0.0, 0.0]]),
+        sizes=np.array([[0.2, 0.2]]),
+        tensor_args=tensor_args
+    )
+
+    traj_box = CircularTrajectory(
+        center=np.array([0.0, 0.0, 0.0]),
+        radius=0.5,
+        angular_velocity=2 * np.pi,
+        axis='z',
+        tensor_args=tensor_args
+    )
+
+    moving_box = MovingObjectField(
+        primitive_fields=[box_prim],
+        trajectory=traj_box,
+        name="box"
+    )
+
+    # Create environment with automatic MovingObjectField handling
     limits = torch.tensor([[-1.0, -1.0], [1.0, 1.0]], **tensor_args)
 
-    print("\nBuilding time-varying SDF grid...")
-    grid_sdf = GridMapSDFTimeVarying(
+    print("\nCreating EnvDynBase with MovingObjectField instances...")
+    env = EnvDynBase(
         limits=limits,
-        cell_size=0.02,
-        moving_obj_list_fn=moving_objects_fn,
+        obj_fixed_list=[],
+        obj_extra_list=[moving_sphere1, moving_sphere2, moving_box],
+        precompute_sdf_obj_fixed=False,
+        precompute_sdf_obj_extra=False,
         time_range=(0.0, 1.0),
-        num_time_steps=25,
         k_smooth=30.0,
-        overlap_margin=0.05,
+        smoothing_method="Quadratic",
         tensor_args=tensor_args
     )
 
@@ -264,11 +242,13 @@ def test_time_varying_sdf_grid():
 
     times = [0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0]
     for ax, t in zip(axes, times):
-        grid_sdf.render_sdf_at_time(t, ax=ax, fig=None, num_points=150)
+        env.render_sdf(ax=ax, fig=None, use_smooth_union=True, time=t)
+        ax.set_title(f"t = {t:.2f}s", fontsize=10)
 
     plt.tight_layout()
-    plt.savefig('test_time_varying_sdf.png', dpi=150, bbox_inches='tight')
-    print("✓ Saved time-varying SDF visualization to test_time_varying_sdf.png")
+    plt.savefig('/tmp/test_time_varying_sdf.png', dpi=150, bbox_inches='tight')
+    print("✓ Saved time-varying SDF visualization to /tmp/test_time_varying_sdf.png")
+    plt.close()
 
     # Test querying
     print("\nTesting SDF queries at specific points:")
@@ -281,70 +261,91 @@ def test_time_varying_sdf_grid():
     for point in test_points:
         print(f"\n  Point {to_numpy(point)}:")
         for t in [0.0, 0.5, 1.0]:
-            sdf_val = grid_sdf(point.unsqueeze(0), t)
+            sdf_val = env.compute_sdf(point.unsqueeze(0).unsqueeze(0), time=t)
             collision_str = " [COLLISION]" if sdf_val.item() < 0 else ""
             print(f"    t={t:.1f}: SDF = {sdf_val.item():+.4f}{collision_str}")
 
-    print("✓ SDF queries working correctly")
+    print("✓ SDF queries working correctly with automatic MovingObjectField updates")
 
 
-def test_integration_example():
-    """Full integration example showing typical usage."""
+def test_narrow_passage_scenario():
+    """Full integration example: narrow passage that opens and closes."""
     print("\n" + "="*80)
-    print("TEST 5: Full Integration Example")
+    print("TEST 4: Narrow Passage Scenario")
     print("="*80)
 
     tensor_args = DEFAULT_TENSOR_ARGS
 
-    # Define moving obstacles scenario: narrow passage that opens and closes
-    def moving_obstacles_fn(t):
-        """
-        Narrow passage scenario:
-        - Two boxes move to create a passage that opens wider over time
-        - A sphere moves through the passage
-        """
-        # Left wall - moves left
-        left_wall_x = -0.3 - 0.3 * t
-        left_wall = MultiBoxField(
-            centers=np.array([[left_wall_x, 0.0]]),
-            sizes=np.array([[0.3, 1.5]]),
-            tensor_args=tensor_args
-        )
+    # Left wall - moves left
+    left_wall_prim = MultiBoxField(
+        centers=np.array([[0.0, 0.0]]),
+        sizes=np.array([[0.3, 1.5]]),
+        tensor_args=tensor_args
+    )
 
-        # Right wall - moves right
-        right_wall_x = 0.3 + 0.3 * t
-        right_wall = MultiBoxField(
-            centers=np.array([[right_wall_x, 0.0]]),
-            sizes=np.array([[0.3, 1.5]]),
-            tensor_args=tensor_args
-        )
+    traj_left = LinearTrajectory(
+        keyframe_times=[0.0, 1.0],
+        keyframe_positions=[[-0.3, 0.0, 0.0], [-0.6, 0.0, 0.0]],
+        tensor_args=tensor_args
+    )
 
-        # Moving sphere obstacle
-        sphere_y = -0.8 + 1.6 * t
-        moving_sphere = MultiSphereField(
-            centers=np.array([[0.0, sphere_y]]),
-            radii=np.array([0.15]),
-            tensor_args=tensor_args
-        )
+    left_wall = MovingObjectField(
+        primitive_fields=[left_wall_prim],
+        trajectory=traj_left,
+        name="left_wall"
+    )
 
-        obj1 = ObjectField([left_wall], name="left_wall")
-        obj2 = ObjectField([right_wall], name="right_wall")
-        obj3 = ObjectField([moving_sphere], name="moving_sphere")
+    # Right wall - moves right
+    right_wall_prim = MultiBoxField(
+        centers=np.array([[0.0, 0.0]]),
+        sizes=np.array([[0.3, 1.5]]),
+        tensor_args=tensor_args
+    )
 
-        return [obj1, obj2, obj3]
+    traj_right = LinearTrajectory(
+        keyframe_times=[0.0, 1.0],
+        keyframe_positions=[[0.3, 0.0, 0.0], [0.6, 0.0, 0.0]],
+        tensor_args=tensor_args
+    )
 
-    # Create SDF grid
+    right_wall = MovingObjectField(
+        primitive_fields=[right_wall_prim],
+        trajectory=traj_right,
+        name="right_wall"
+    )
+
+    # Moving sphere obstacle
+    sphere_prim = MultiSphereField(
+        centers=np.array([[0.0, 0.0]]),
+        radii=np.array([0.15]),
+        tensor_args=tensor_args
+    )
+
+    traj_sphere = LinearTrajectory(
+        keyframe_times=[0.0, 1.0],
+        keyframe_positions=[[0.0, -0.8, 0.0], [0.0, 0.8, 0.0]],
+        tensor_args=tensor_args
+    )
+
+    moving_sphere = MovingObjectField(
+        primitive_fields=[sphere_prim],
+        trajectory=traj_sphere,
+        name="moving_sphere"
+    )
+
+    # Create environment
     limits = torch.tensor([[-1.0, -1.0], [1.0, 1.0]], **tensor_args)
 
     print("\nBuilding narrow passage scenario...")
-    grid_sdf = GridMapSDFTimeVarying(
+    env = EnvDynBase(
         limits=limits,
-        cell_size=0.015,
-        moving_obj_list_fn=moving_obstacles_fn,
+        obj_fixed_list=[],
+        obj_extra_list=[left_wall, right_wall, moving_sphere],
+        precompute_sdf_obj_fixed=False,
+        precompute_sdf_obj_extra=False,
         time_range=(0.0, 1.0),
-        num_time_steps=30,
         k_smooth=40.0,
-        overlap_margin=0.02,
+        smoothing_method="Quadratic",
         tensor_args=tensor_args
     )
 
@@ -354,12 +355,13 @@ def test_integration_example():
 
     times = np.linspace(0, 1, 8)
     for ax, t in zip(axes, times):
-        grid_sdf.render_sdf_at_time(t, ax=ax, fig=None, num_points=200)
-        ax.set_title(f't = {t:.2f}s (Passage {"Opening" if t < 0.5 else "Open"})')
+        env.render_sdf(ax=ax, fig=None, use_smooth_union=True, time=t)
+        ax.set_title(f't = {t:.2f}s (Passage {"Opening" if t < 0.5 else "Open"})', fontsize=10)
 
     plt.tight_layout()
-    plt.savefig('test_integration_narrow_passage.png', dpi=150, bbox_inches='tight')
-    print("✓ Saved integration example to test_integration_narrow_passage.png")
+    plt.savefig('/tmp/test_integration_narrow_passage.png', dpi=150, bbox_inches='tight')
+    print("✓ Saved integration example to /tmp/test_integration_narrow_passage.png")
+    plt.close()
 
     # Simulate robot path through passage
     print("\nSimulating robot path through narrow passage:")
@@ -371,8 +373,8 @@ def test_integration_example():
     min_clearances = []
 
     for x, y, t in zip(robot_path_x, robot_path_y, robot_times):
-        point = torch.tensor([[x, y]], **tensor_args)
-        sdf_val = grid_sdf(point, t).item()
+        point = torch.tensor([[x, y]], **tensor_args).unsqueeze(1)
+        sdf_val = env.compute_sdf(point, time=t).item()
         collisions.append(sdf_val < 0)
         min_clearances.append(sdf_val)
 
@@ -381,7 +383,8 @@ def test_integration_example():
     print(f"  Minimum clearance: {min(min_clearances):.4f}")
 
     if num_collisions > 0:
-        print(f"  Collisions occur around t={robot_times[collisions.index(True)]:.2f}s")
+        first_collision_idx = collisions.index(True)
+        print(f"  Collisions occur around t={robot_times[first_collision_idx]:.2f}s")
 
     print("✓ Integration test complete")
 
@@ -389,15 +392,19 @@ def test_integration_example():
 def run_all_tests():
     """Run all tests."""
     print("\n" + "="*80)
-    print("RUNNING ALL TESTS FOR TIME-VARYING SDF IMPLEMENTATION")
+    print("RUNNING ALL TESTS FOR TIME-VARYING SDF WITH WRAPPER PATTERN")
     print("="*80)
+    print("\nKey improvements:")
+    print("- EnvDynBase wraps EnvBase (composition over inheritance)")
+    print("- MovingObjectField automatically detected and updated")
+    print("- No need for moving_obj_list_fn parameter")
+    print("- Simpler, cleaner API")
 
     try:
         test_smooth_union()
-        #test_overlap_detection()
         test_moving_trajectories()
-        test_time_varying_sdf_grid()
-        test_integration_example()
+        test_time_varying_sdf()
+        test_narrow_passage_scenario()
 
         print("\n" + "="*80)
         print("✓ ALL TESTS PASSED!")

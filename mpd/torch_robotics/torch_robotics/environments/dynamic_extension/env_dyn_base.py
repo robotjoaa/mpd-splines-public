@@ -1,179 +1,241 @@
 """
 Dynamic environment base class with overlap detection and smooth SDF composition.
 
-This module extends EnvBase to handle potentially overlapping objects using
-smooth SDF unions for differentiability.
+This module wraps EnvBase to handle potentially overlapping objects using
+smooth SDF unions for differentiability. Movement trajectories are handled
+automatically when MovingObjectField instances are detected in object lists.
 """
 
 import torch
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jacobian
 
-from torch_robotics.environments.env_base import EnvBase
-#from torch_robotics.environments.dynamic_extension.grid_map_dyn import GridMapDynSDF
-from torch_robotics.environments.grid_map_sdf import GridMapSDF
-from torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
-from torch_robotics.torch_utils.torch_utils import to_numpy, DEFAULT_TENSOR_ARGS
-from torch_robotics.torch_utils.torch_timer import TimerCUDA
-# class EnvBase(ABC):
+from mpd.torch_robotics.torch_robotics.environments.env_base import EnvBase
+from mpd.torch_robotics.torch_robotics.environments.dynamic_extension.moving_primitives import MovingObjectField
+from mpd.torch_robotics.torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
+from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import to_numpy, DEFAULT_TENSOR_ARGS
+from mpd.torch_robotics.torch_robotics.torch_utils.torch_timer import TimerCUDA
 
-#     def __init__(
-#         self,
-#         limits=None,
-#         obj_fixed_list=None,
-#         obj_extra_list=None,
-#         precompute_sdf_obj_fixed=True,
-#         precompute_sdf_obj_extra=True,
-#         sdf_cell_size=None,
-#         tensor_args=DEFAULT_TENSOR_ARGS,
-#         **kwargs,
-#     ):
 
-class EnvDynBase(EnvBase):
+class EnvDynBase:
     """
-    Dynamic environment base class that handles overlapping objects.
+    Dynamic environment wrapper class that handles overlapping objects with smooth SDF composition.
 
-    Unlike EnvBase which uses torch.minimum (assumes no overlaps),
-    this class detects overlaps and applies smooth union for differentiability.
-
-    Supports time-varying rendering for moving obstacles.
+    This class wraps EnvBase and provides:
+    - Smooth SDF unions (differentiable at overlaps)
+    - Automatic handling of MovingObjectField instances in object lists
+    - Time-aware rendering when MovingObjectField objects are detected
     """
 
     def __init__(
         self,
         k_smooth=20.0,
-        moving_obj_list_fn=None,
         smoothing_method="Quadratic",
         time_range=(0.0, 1.0),
         **kwargs
     ):
         """
         Args:
-            k_smooth: Smoothness parameter for log-sum-exp union (higher = sharper)
-            moving_obj_list_fn: Optional function that takes time t and returns list of ObjectField at that time
+            k_smooth: Smoothness parameter for smooth union (higher = sharper transition)
+            smoothing_method: "Quadratic" (smin) or "LSE" (LogSumExp)
             time_range: (t_min, t_max) for time-varying objects
-            **kwargs: Arguments passed to EnvBase
+            **kwargs: Arguments passed to EnvBase constructor
         """
-        super().__init__(**kwargs)
+        # Create wrapped EnvBase instance
+        self.env = EnvBase(**kwargs)
 
+        # Smooth SDF parameters
         self.k_smooth = k_smooth
-        self.smoothing_method=smoothing_method
-        # Time-varying obstacle support
+        self.smoothing_method = smoothing_method
 
-        self.moving_obj_list_fn = moving_obj_list_fn
+        # Time-varying obstacle support
         self.time_range = time_range
 
-    # def build_sdf_grid(self, compute_sdf_obj_fixed=False, compute_sdf_obj_extra=False):
-    #     if compute_sdf_obj_fixed:
-    #         with TimerCUDA() as t:
-    #             # Compute SDF grid
-    #             self.grid_map_sdf_obj_fixed = GridMapDynSDF(
-    #                 self.limits, self.sdf_cell_size, self.obj_fixed_list, tensor_args=self.tensor_args
-    #             )
-    #         print(f"Computing the SDF grid and gradients of FIXED objects took: {t.elapsed:.3f} sec")
+    # ===== Delegated properties from wrapped EnvBase =====
 
-    #     if self.obj_extra_list and compute_sdf_obj_extra:
-    #         with TimerCUDA() as t:
-    #             # Compute SDF grid
-    #             self.grid_map_sdf_obj_extra = GridMapDynSDF(
-    #                 self.limits, self.sdf_cell_size, self.obj_extra_list, tensor_args=self.tensor_args
-    #             )
-    #         print(f"Computing the SDF grid and gradients of EXTRA objects took: {t.elapsed:.3f} sec")
+    @property
+    def tensor_args(self):
+        return self.env.tensor_args
+
+    @property
+    def name(self):
+        return self.env.name
+
+    @property
+    def limits(self):
+        return self.env.limits
+
+    @property
+    def limits_np(self):
+        return self.env.limits_np
+
+    @property
+    def dim(self):
+        return self.env.dim
+
+    @property
+    def obj_fixed_list(self):
+        return self.env.obj_fixed_list
+
+    @obj_fixed_list.setter
+    def obj_fixed_list(self, value):
+        self.env.obj_fixed_list = value
+
+    @property
+    def obj_extra_list(self):
+        return self.env.obj_extra_list
+
+    @obj_extra_list.setter
+    def obj_extra_list(self, value):
+        self.env.obj_extra_list = value
+
+    @property
+    def obj_all_list(self):
+        return self.env.obj_all_list
+
+    @property
+    def grid_map_sdf_obj_fixed(self):
+        return self.env.grid_map_sdf_obj_fixed
+
+    @property
+    def grid_map_sdf_obj_extra(self):
+        return self.env.grid_map_sdf_obj_extra
+
+    @property
+    def sdf_cell_size(self):
+        return self.env.sdf_cell_size
+
+    # ===== Delegated methods from wrapped EnvBase =====
+
+    def update_obj_all_list(self):
+        return self.env.update_obj_all_list()
+
+    def get_obj_list(self):
+        return self.env.get_obj_list()
+
+    def get_obj_fixed_list(self):
+        return self.env.get_obj_fixed_list()
+
+    def get_obj_extra_list(self):
+        return self.env.get_obj_extra_list()
+
+    def set_obj_extra_list(self, obj_extra_list):
+        return self.env.set_obj_extra_list(obj_extra_list)
+
+    def get_df_obj_list(self, return_extra_objects_only=False):
+        return self.env.get_df_obj_list(return_extra_objects_only)
+
+    def build_sdf_grid(self, compute_sdf_obj_fixed=False, compute_sdf_obj_extra=False):
+        return self.env.build_sdf_grid(compute_sdf_obj_fixed, compute_sdf_obj_extra)
+
+    def add_objects_extra(self, obj_l):
+        return self.env.add_objects_extra(obj_l)
+
+    def update_objects_extra(self):
+        return self.env.update_objects_extra()
+
+    def build_occupancy_map(self, cell_size=None):
+        return self.env.build_occupancy_map(cell_size)
+
+    def zero_grad(self):
+        return self.env.zero_grad()
+
+    # ===== Helper methods =====
+
+    def _has_moving_objects(self):
+        """Check if any objects in fixed or extra lists are MovingObjectField instances."""
+        for obj in self.obj_fixed_list:
+            if isinstance(obj, MovingObjectField):
+                return True
+        for obj in self.obj_extra_list:
+            if isinstance(obj, MovingObjectField):
+                return True
+        return False
+
+    def _update_moving_objects_at_time(self, time):
+        """Update all MovingObjectField instances to the specified time."""
+        for obj in self.obj_fixed_list:
+            if isinstance(obj, MovingObjectField):
+                obj.update_pose_at_time(time)
+        for obj in self.obj_extra_list:
+            if isinstance(obj, MovingObjectField):
+                obj.update_pose_at_time(time)
+
+    # ===== Enhanced rendering with automatic MovingObjectField support =====
 
     def render(self, ax=None, time=None):
         """
-        Render the environment, optionally at a specific time for moving obstacles.
+        Render the environment, automatically handling MovingObjectField instances.
+
+        If time is provided or MovingObjectField objects are detected, updates their
+        poses before rendering.
 
         Args:
             ax: Matplotlib axis
-            time: Optional time parameter for time-varying obstacles.
-                  If provided, renders moving obstacles at this time.
-                  If None, renders static objects only.
+            time: Optional time parameter for MovingObjectField objects.
+                  If None and moving objects exist, uses middle of time_range.
         """
-        # Render fixed objects (always present)
-        if self.obj_fixed_list:
-            for obj in self.obj_fixed_list:
-                obj.render(ax)
+        # Auto-detect moving objects and determine rendering time
+        has_moving = self._has_moving_objects()
 
-        # Render extra objects (static)
-        if self.obj_extra_list:
-            for obj in self.obj_extra_list:
-                obj.render(ax, color="red", cmap="Reds")
+        if has_moving:
+            # Use provided time, or default to middle of time range
+            if time is None:
+                time = (self.time_range[0] + self.time_range[1]) / 2.0
+            # Clamp to valid range
+            time = max(self.time_range[0], min(self.time_range[1], time))
+            # Update all moving objects
+            self._update_moving_objects_at_time(time)
 
-        # Render moving objects at specific time
-        if time is not None and self.moving_obj_list_fn is not None:
-            # Clamp time to valid range
-            time_clamped = max(self.time_range[0], min(self.time_range[1], time))
+        # Delegate to wrapped EnvBase for actual rendering
+        self.env.render(ax)
 
-            # Get object configuration at this time
-            moving_objs = self.moving_obj_list_fn(time_clamped)
-
-            # Render each moving object
-            for obj in moving_objs:
-                obj.render(ax, color="purple", cmap="Purples", alpha=0.7)
-
-        # Set axes limits and labels
-        ax.set_xlim(self.limits_np[0][0], self.limits_np[1][0])
-        ax.set_ylim(self.limits_np[0][1], self.limits_np[1][1])
-        if self.dim == 3:
-            ax.set_zlim(self.limits_np[0][2], self.limits_np[1][2])
-            ax.set_zlabel("z")
-        ax.set_aspect("equal")
-
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-
-    def compute_sdf(self, x, reshape_shape=None, use_smooth_union=True, smoothing_method="Quadratic"):
+    def compute_sdf(self, x, reshape_shape=None, use_smooth_union=True, smoothing_method=None, time=None):
         """
         Compute SDF with optional smooth union for all objects.
 
-        This overrides EnvBase.compute_sdf() to use smooth union instead of hard minimum.
+        Uses smooth union instead of EnvBase's hard minimum for differentiability.
+        Automatically handles MovingObjectField instances at the specified time.
 
         Args:
             x: Query points, shape (..., dim)
             reshape_shape: Optional shape to reshape output
-            use_smooth_union: If True, use smooth union (logsumexp);
-                            if False, fall back to hard minimum
+            use_smooth_union: If True, use smooth union; if False, use hard minimum
+            smoothing_method: Override default smoothing method ("Quadratic" or "LSE")
+            time: Time for MovingObjectField evaluation (auto-detected if None)
 
         Returns:
             SDF values at query points
         """
+        # Update moving objects if present
+        has_moving = self._has_moving_objects()
+        if has_moving:
+            if time is None:
+                time = (self.time_range[0] + self.time_range[1]) / 2.0
+            time = max(self.time_range[0], min(self.time_range[1], time))
+            self._update_moving_objects_at_time(time)
+
+        # Use instance default if not specified
+        if smoothing_method is None:
+            smoothing_method = self.smoothing_method
+
         if not use_smooth_union:
-            # Fall back to parent class behavior (hard minimum)
-            return super().compute_sdf(x, reshape_shape=reshape_shape)
+            # Delegate to wrapped EnvBase (hard minimum)
+            return self.env.compute_sdf(x, reshape_shape=reshape_shape)
 
 
-        if smoothing_method == "LSE" : 
-            print("Smoothing method : ",smoothing_method)
-            # Collect all SDFs
+        if smoothing_method == "LSE":
+            # Collect all SDFs using LogSumExp smooth union
             all_sdfs = []
 
-            # Compute SDF for fixed objects
-            # if self.grid_map_sdf_obj_fixed is not None:
-            #     # Grid-based SDF (already precomputed)
-            #     sdf_fixed = self.grid_map_sdf_obj_fixed(x)
-            #     if reshape_shape:
-            #         sdf_fixed = sdf_fixed.reshape(reshape_shape)
-            #     all_sdfs.append(sdf_fixed)
-            # else:
-                # Compute SDF from each object
+            # Compute SDF from each fixed object
             for obj in self.obj_fixed_list:
-                print(obj)
                 sdf_obj = obj.compute_signed_distance(x)
                 if reshape_shape:
                     sdf_obj = sdf_obj.reshape(reshape_shape)
                 all_sdfs.append(sdf_obj)
 
-            # Compute SDF for extra objects
-            # if self.grid_map_sdf_obj_extra is not None:
-            #     # Grid-based SDF
-            #     sdf_extra = self.grid_map_sdf_obj_extra(x)
-            #     if reshape_shape:
-            #         sdf_extra = sdf_extra.reshape(reshape_shape)
-            #     all_sdfs.append(sdf_extra)
-
-            # else :
-                # Compute SDF from each object
+            # Compute SDF from each extra object
             for obj in self.obj_extra_list:
                 sdf_obj = obj.compute_signed_distance(x)
                 if reshape_shape:
@@ -184,79 +246,64 @@ class EnvDynBase(EnvBase):
             if len(all_sdfs) == 0:
                 return torch.ones(x.shape[:-1], **self.tensor_args) * float('inf')
 
-            # Apply smooth union to all SDFs at once
+            # Apply smooth union: φ_union = -k * logsumexp(-φ_i/k)
             if len(all_sdfs) == 1:
                 return all_sdfs[0]
             else:
-                # Stack all SDFs and apply logsumexp
-                # φ_union = -k * logsumexp(-φ_i/k)
                 sdfs_stacked = torch.stack(all_sdfs, dim=-1)
-                print(sdfs_stacked.shape)
                 return -self.k_smooth * torch.logsumexp(-sdfs_stacked / self.k_smooth, dim=-1)
-            
-        elif smoothing_method == "Quadratic" : 
-            print("Smoothing method : ",smoothing_method)
-            sdf = None
-            # input a, b : sdf gridmap, k : self.k_smooth
-            def smin(a, b, k) : 
-                k *= 4.0 #normalizing factor https://iquilezles.org/articles/smin/
-                h = torch.maximum(k - torch.abs(a - b), torch.zeros_like(a)) / k; 
-                return torch.minimum(a,b) - k*0.25*h*h
-            
-            # if the sdf of fixed objects is precomputed, then use it
-            # if self.grid_map_sdf_obj_fixed is not None:
-            #     sdf = self.grid_map_sdf_obj_fixed(x)
-            #     if reshape_shape:
-            #         sdf = sdf.reshape(reshape_shape)
-            # else:
-            if self.obj_fixed_list : 
-                for obj in self.obj_fixed_list:
-                    sdf_obj = obj.compute_signed_distance(x)
-                    if reshape_shape is not None:
-                        sdf_obj = sdf_obj.reshape(reshape_shape)
-                    if sdf is None:
-                        sdf = sdf_obj
-                    else:
-                        sdf = smin(sdf, sdf_obj, self.k_smooth)
 
-            # compute sdf of extra objects
-            sdf_extra_objects = None
-            # if self.obj_extra_list:
-            #     if self.grid_map_sdf_obj_extra is not None:
-            #         sdf_extra_objects = self.grid_map_sdf_obj_extra(x)
-            #         if reshape_shape:
-            #             sdf_extra_objects = sdf_extra_objects.reshape(reshape_shape)
-            #     else:
-            if self.obj_extra_list : 
-                for obj in self.obj_extra_list:
-                    sdf_obj = obj.compute_signed_distance(x)
-                    if reshape_shape is not None:
-                        sdf_obj = sdf_obj.reshape(reshape_shape)
-                    if sdf_extra_objects is None:
-                        sdf_extra_objects = sdf_obj
-                    else:
-                        sdf_extra_objects = smin(sdf_extra_objects, sdf_obj, self.k_smooth)
+        elif smoothing_method == "Quadratic":
+            # Quadratic smooth minimum (smin) implementation
+            # Based on: https://iquilezles.org/articles/smin/
+            def smin(a, b, k):
+                k *= 4.0  # Normalizing factor
+                h = torch.maximum(k - torch.abs(a - b), torch.zeros_like(a)) / k
+                return torch.minimum(a, b) - k * 0.25 * h * h
+
+            sdf = None
+
+            # Compute SDF from fixed objects
+            for obj in self.obj_fixed_list:
+                sdf_obj = obj.compute_signed_distance(x)
+                if reshape_shape is not None:
+                    sdf_obj = sdf_obj.reshape(reshape_shape)
                 if sdf is None:
-                    sdf = sdf_extra_objects
+                    sdf = sdf_obj
                 else:
-                    sdf = smin(sdf, sdf_extra_objects, self.k_smooth)
+                    sdf = smin(sdf, sdf_obj, self.k_smooth)
+
+            # Compute SDF from extra objects
+            for obj in self.obj_extra_list:
+                sdf_obj = obj.compute_signed_distance(x)
+                if reshape_shape is not None:
+                    sdf_obj = sdf_obj.reshape(reshape_shape)
+                if sdf is None:
+                    sdf = sdf_obj
+                else:
+                    sdf = smin(sdf, sdf_obj, self.k_smooth)
+
+            # Handle case with no objects
+            if sdf is None:
+                sdf = torch.ones(x.shape[:-1], **self.tensor_args) * float('inf')
 
             return sdf
 
-        else :
-            raise NotImplementedError("smoothing method not implemented")
+        else:
+            raise NotImplementedError(f"Smoothing method '{smoothing_method}' not implemented")
 
-    def render_sdf(self, ax=None, fig=None, use_smooth_union=True):
+    def render_sdf(self, ax=None, fig=None, use_smooth_union=True, time=None):
         """
-        Render SDF field. Compatible with env_base.py visualization.
+        Render SDF field with automatic MovingObjectField support.
 
         Args:
             ax: Matplotlib axis
             fig: Matplotlib figure
             use_smooth_union: Whether to use smooth union
+            time: Time for MovingObjectField evaluation
         """
         if self.dim != 2:
-            raise NotImplementedError("Rendering only implemented for 2D environments")
+            raise NotImplementedError("SDF rendering only implemented for 2D environments")
 
         # Create query grid
         xs = torch.linspace(self.limits_np[0][0], self.limits_np[1][0], steps=200, **self.tensor_args)
@@ -268,7 +315,8 @@ class EnvDynBase(EnvBase):
         stacked_tensors = torch.stack((X_flat, Y_flat), dim=-1).view(-1, 1, self.dim)
 
         # Compute SDF
-        sdf = self.compute_sdf(stacked_tensors, reshape_shape=X.shape, use_smooth_union=use_smooth_union, smoothing_method=self.smoothing_method)
+        sdf = self.compute_sdf(stacked_tensors, reshape_shape=X.shape,
+                              use_smooth_union=use_smooth_union, time=time)
 
         sdf_np = to_numpy(sdf)
         ctf = ax.contourf(to_numpy(X), to_numpy(Y), sdf_np, levels=20, cmap='RdBu')
@@ -283,14 +331,15 @@ class EnvDynBase(EnvBase):
         ax.set_xlabel("x")
         ax.set_ylabel("y")
 
-    def render_grad_sdf(self, ax=None, fig=None, use_smooth_union=True):
+    def render_grad_sdf(self, ax=None, fig=None, use_smooth_union=True, time=None):
         """
-        Render gradient of SDF field. Compatible with env_base.py visualization.
+        Render gradient of SDF field with automatic MovingObjectField support.
 
         Args:
             ax: Matplotlib axis
             fig: Matplotlib figure
             use_smooth_union: Whether to use smooth union
+            time: Time for MovingObjectField evaluation
         """
         if self.dim != 2:
             raise NotImplementedError("Gradient rendering only implemented for 2D environments")
@@ -306,7 +355,9 @@ class EnvDynBase(EnvBase):
 
         # Compute gradient using autograd
         stacked_tensors.requires_grad_(True)
-        f_grad_sdf = lambda x: self.compute_sdf(x, reshape_shape=X.shape, use_smooth_union=use_smooth_union, smoothing_method=self.smoothing_method).sum()
+        f_grad_sdf = lambda x: self.compute_sdf(x, reshape_shape=X.shape,
+                                                use_smooth_union=use_smooth_union,
+                                                time=time).sum()
         grad_sdf = jacobian(f_grad_sdf, stacked_tensors)
 
         grad_sdf_np = to_numpy(grad_sdf).squeeze()
@@ -455,7 +506,6 @@ class EnvDynBase(EnvBase):
 
     def animate_sdf_with_extra_objects(
         self,
-        extra_obj_trajectory_fn=None,
         time_range=None,
         n_frames=50,
         video_filepath="sdf_animation.mp4",
@@ -466,13 +516,11 @@ class EnvDynBase(EnvBase):
         **kwargs
     ):
         """
-        Create an animation of SDF field as extra objects move over time.
+        Create an animation of SDF field as MovingObjectField instances move over time.
 
-        This visualizes how the SDF composition (fixed + extra) changes with smoothing.
+        Automatically detects and animates any MovingObjectField objects in the environment.
 
         Args:
-            extra_obj_trajectory_fn: Function(t) that returns list of ObjectField for extra_list at time t
-                                    If None, uses self.moving_obj_list_fn
             time_range: (t_min, t_max) time range for animation. If None, uses self.time_range
             n_frames: Number of frames in animation
             video_filepath: Path to save video
@@ -482,14 +530,7 @@ class EnvDynBase(EnvBase):
             **kwargs: Additional arguments passed to create_animation_video
 
         Example:
-            # Animate SDF as obstacles move
-            def moving_obstacles(t):
-                pos_x = -0.5 + t  # Move from left to right
-                sphere = MultiSphereField(centers=[[pos_x, 0.0]], radii=[0.2])
-                return [ObjectField([sphere], "moving")]
-
             env.animate_sdf_with_extra_objects(
-                extra_obj_trajectory_fn=moving_obstacles,
                 time_range=(0.0, 1.0),
                 n_frames=30,
                 video_filepath='sdf_moving_obstacle.mp4'
@@ -501,11 +542,8 @@ class EnvDynBase(EnvBase):
         if self.dim != 2:
             raise NotImplementedError("SDF animation only implemented for 2D environments")
 
-        # Use provided function or fallback to moving_obj_list_fn
-        if extra_obj_trajectory_fn is None:
-            if self.moving_obj_list_fn is None:
-                raise ValueError("Either extra_obj_trajectory_fn or moving_obj_list_fn must be provided")
-            extra_obj_trajectory_fn = self.moving_obj_list_fn
+        if not self._has_moving_objects():
+            raise ValueError("No MovingObjectField instances found in environment")
 
         # Use provided time range or fallback to self.time_range
         if time_range is None:
@@ -526,30 +564,22 @@ class EnvDynBase(EnvBase):
 
         # Determine color scale from first frame if not provided
         if vmin is None or vmax is None:
-            # Temporarily set extra objects to compute initial SDF
-            original_extra_list = self.obj_extra_list
-            self.obj_extra_list = extra_obj_trajectory_fn(times[0])
             sdf_initial = self.compute_sdf(stacked_tensors, reshape_shape=X.shape,
                                           use_smooth_union=use_smooth_union,
-                                          smoothing_method=self.smoothing_method)
+                                          time=times[0])
             if vmin is None:
                 vmin = max(sdf_initial.min().item(), -0.6)
             if vmax is None:
                 vmax = min(sdf_initial.max().item(), 0.6)
-            self.obj_extra_list = original_extra_list
 
         def animate_fn(i, ax):
             ax.clear()
             time_current = times[i]
 
-            # Update extra objects for this time
-            original_extra_list = self.obj_extra_list
-            self.obj_extra_list = extra_obj_trajectory_fn(time_current)
-
-            # Compute SDF
+            # Compute SDF at this time (automatically updates MovingObjectField poses)
             sdf = self.compute_sdf(stacked_tensors, reshape_shape=X.shape,
                                   use_smooth_union=use_smooth_union,
-                                  smoothing_method=self.smoothing_method)
+                                  time=time_current)
             sdf_np = to_numpy(sdf)
 
             # Plot SDF
@@ -561,12 +591,11 @@ class EnvDynBase(EnvBase):
 
             # Overlay obstacles if requested
             if show_obstacles:
-                # Render fixed objects
+                # Render all objects (already at correct time)
                 if self.obj_fixed_list:
                     for obj in self.obj_fixed_list:
-                        obj.render(ax, alpha=0.3, color='blue')
+                        obj.render(ax, alpha=0.3, color='gray')
 
-                # Render extra objects
                 if self.obj_extra_list:
                     for obj in self.obj_extra_list:
                         obj.render(ax, alpha=0.5, color='red')
@@ -581,18 +610,14 @@ class EnvDynBase(EnvBase):
             ax.set_title(f"SDF ({method_name}, k={self.k_smooth:.1f})\nTime: {time_current:.3f}s",
                         fontsize=12)
 
-            # Restore original extra objects
-            self.obj_extra_list = original_extra_list
-
         create_animation_video(
             fig, animate_fn, n_frames=n_frames, video_filepath=video_filepath, fargs=(ax,), **kwargs
         )
 
-        print(f"✓ Saved SDF animation to {video_filepath}")
+        print(f"Saved SDF animation to {video_filepath}")
 
     def animate_grad_sdf_with_extra_objects(
         self,
-        extra_obj_trajectory_fn=None,
         time_range=None,
         n_frames=50,
         video_filepath="grad_sdf_animation.mp4",
@@ -602,13 +627,12 @@ class EnvDynBase(EnvBase):
         **kwargs
     ):
         """
-        Create an animation of gradient SDF field as extra objects move over time.
+        Create an animation of gradient SDF field as MovingObjectField instances move.
 
-        This visualizes how gradients change with smoothing as obstacles overlap.
+        Automatically detects and animates gradients for any MovingObjectField objects.
 
         Args:
-            extra_obj_trajectory_fn: Function(t) that returns list of ObjectField for extra_list at time t
-            time_range: (t_min, t_max) time range for animation
+            time_range: (t_min, t_max) time range for animation. If None, uses self.time_range
             n_frames: Number of frames in animation
             video_filepath: Path to save video
             use_smooth_union: Whether to use smooth union (True) or hard minimum (False)
@@ -618,7 +642,6 @@ class EnvDynBase(EnvBase):
 
         Example:
             env.animate_grad_sdf_with_extra_objects(
-                extra_obj_trajectory_fn=moving_obstacles,
                 time_range=(0.0, 1.0),
                 n_frames=30,
                 video_filepath='grad_sdf_moving.mp4'
@@ -630,11 +653,8 @@ class EnvDynBase(EnvBase):
         if self.dim != 2:
             raise NotImplementedError("Gradient SDF animation only implemented for 2D environments")
 
-        # Use provided function or fallback
-        if extra_obj_trajectory_fn is None:
-            if self.moving_obj_list_fn is None:
-                raise ValueError("Either extra_obj_trajectory_fn or moving_obj_list_fn must be provided")
-            extra_obj_trajectory_fn = self.moving_obj_list_fn
+        if not self._has_moving_objects():
+            raise ValueError("No MovingObjectField instances found in environment")
 
         if time_range is None:
             time_range = self.time_range
@@ -656,15 +676,11 @@ class EnvDynBase(EnvBase):
             ax.clear()
             time_current = times[i]
 
-            # Update extra objects for this time
-            original_extra_list = self.obj_extra_list
-            self.obj_extra_list = extra_obj_trajectory_fn(time_current)
-
-            # Compute gradient using autograd
+            # Compute gradient using autograd (automatically updates MovingObjectField poses)
             stacked_tensors_grad = stacked_tensors.clone().detach().requires_grad_(True)
             f_grad_sdf = lambda x: self.compute_sdf(x, reshape_shape=X.shape,
                                                     use_smooth_union=use_smooth_union,
-                                                    smoothing_method=self.smoothing_method).sum()
+                                                    time=time_current).sum()
             grad_sdf = jacobian(f_grad_sdf, stacked_tensors_grad)
             grad_sdf_np = to_numpy(grad_sdf).squeeze()
 
@@ -675,14 +691,12 @@ class EnvDynBase(EnvBase):
                 color="red", scale=arrow_scale
             )
 
-            # Overlay obstacles if requested
+            # Overlay obstacles if requested (already at correct time)
             if show_obstacles:
-                # Render fixed objects
                 if self.obj_fixed_list:
                     for obj in self.obj_fixed_list:
-                        obj.render(ax, alpha=0.3, color='blue')
+                        obj.render(ax, alpha=0.3, color='gray')
 
-                # Render extra objects
                 if self.obj_extra_list:
                     for obj in self.obj_extra_list:
                         obj.render(ax, alpha=0.5, color='red')
@@ -697,24 +711,22 @@ class EnvDynBase(EnvBase):
             ax.set_title(f"Gradient SDF ({method_name}, k={self.k_smooth:.1f})\nTime: {time_current:.3f}s",
                         fontsize=12)
 
-            # Restore original extra objects
-            self.obj_extra_list = original_extra_list
-
         create_animation_video(
             fig, animate_fn, n_frames=n_frames, video_filepath=video_filepath, fargs=(ax,), **kwargs
         )
 
-        print(f"✓ Saved gradient SDF animation to {video_filepath}")
+        print(f"Saved gradient SDF animation to {video_filepath}")
 
 
 if __name__ == "__main__":
-    # Example usage
+    # Example usage demonstrating wrapper pattern with MovingObjectField
     from torch_robotics.environments.primitives import MultiSphereField, MultiBoxField, ObjectField
+    from torch_robotics.environments.dynamic_extension.trajectory import LinearTrajectory, CircularTrajectory
     import numpy as np
 
     tensor_args = DEFAULT_TENSOR_ARGS
 
-    # Create environment with overlapping objects
+    # Example 1: Static environment with overlapping objects
     obj_list = [
         MultiSphereField(
             centers=np.array([[0.0, 0.0], [0.3, 0.0]]),  # Overlapping spheres
@@ -732,10 +744,49 @@ if __name__ == "__main__":
         limits=torch.tensor([[-1, -1], [1, 1]], **tensor_args),
         obj_fixed_list=[ObjectField(obj_list, "test_objects")],
         k_smooth=30.0,
-        overlap_margin=0.05,
+        smoothing_method="Quadratic",
         tensor_args=tensor_args
     )
 
     # Compare methods
     env.compare_sdf_methods(save_path='/tmp/env_dyn_base_comparison.png')
-    print("Visualization saved!")
+    print("Static environment visualization saved!")
+
+    # Example 2: Dynamic environment with MovingObjectField
+    # Create a moving sphere
+    sphere_prim = MultiSphereField(
+        centers=np.array([[0.0, 0.0]]),
+        radii=np.array([0.2]),
+        tensor_args=tensor_args
+    )
+
+    # Define a circular trajectory
+    circular_traj = CircularTrajectory(
+        center=np.array([0.0, 0.0, 0.0]),
+        radius=0.6,
+        angular_velocity=2 * np.pi,  # One full rotation per second
+        initial_phase=0.0,
+        axis='z',
+        tensor_args=tensor_args
+    )
+
+    # Create moving object
+    moving_sphere = MovingObjectField(
+        primitive_fields=[sphere_prim],
+        trajectory=circular_traj,
+        name="moving_sphere"
+    )
+
+    # Create environment with both static and moving objects
+    env_dynamic = EnvDynBase(
+        limits=torch.tensor([[-1, -1], [1, 1]], **tensor_args),
+        obj_fixed_list=[ObjectField(obj_list, "static_objects")],
+        obj_extra_list=[moving_sphere],  # MovingObjectField in extra list
+        k_smooth=30.0,
+        smoothing_method="Quadratic",
+        time_range=(0.0, 1.0),
+        tensor_args=tensor_args
+    )
+
+    print("Dynamic environment created with MovingObjectField!")
+    print("MovingObjectField is automatically handled in render() and compute_sdf()")

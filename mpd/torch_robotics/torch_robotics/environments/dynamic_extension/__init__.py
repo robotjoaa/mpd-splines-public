@@ -2,10 +2,11 @@
 Dynamic extension module for torch_robotics environments.
 
 This module provides support for:
-- Time-varying obstacles
+- Wrapper-based dynamic environments (EnvDynBase wraps EnvBase)
+- MovingObjectField for trajectory-based obstacles
 - Smooth SDF composition with overlap handling
 - Differentiable SDF operations
-- Time-aware animation and rendering
+- Automatic time-aware rendering and animation
 """
 
 from .sdf_utils import (
@@ -21,14 +22,15 @@ from .env_dyn_base import EnvDynBase
 from .env_dyn_simple_2d import EnvDynSimple2DExtraObjects
 
 from .moving_primitives import (
-    TrajectoryInterpolator,
-    LinearTrajectory,
-    CircularTrajectory,
     MovingObjectField,
     create_moving_objects_from_trajectories
 )
 
-#from .grid_map_dyn import GridMapDynSDF
+from .trajectory import (
+    TrajectoryInterpolator,
+    LinearTrajectory,
+    CircularTrajectory
+)
 
 from .task_extensions import (
     animate_robot_trajectories_with_time,
@@ -44,18 +46,18 @@ __all__ = [
     'detect_primitive_overlaps',
     'compute_smooth_sdf_with_overlap_handling',
 
-    # Environment
-    'EnvDynBase', 
+    # Environment (wrapper-based)
+    'EnvDynBase',
+    'EnvDynSimple2DExtraObjects',
 
-    # Moving primitives
+    # Trajectory classes
     'TrajectoryInterpolator',
     'LinearTrajectory',
     'CircularTrajectory',
+
+    # Moving primitives
     'MovingObjectField',
     'create_moving_objects_from_trajectories',
-
-    # Time-varying SDF
-    'GridMapSDFTimeVarying',
 
     # Task extensions
     'animate_robot_trajectories_with_time',
