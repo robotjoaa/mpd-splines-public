@@ -36,10 +36,20 @@ from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
 
 
 @click.command()
+# @click.argument(
+#     "data_dir",
+#     type=click.Path(exists=True),
+#     default=Path(DATASET_BASE_DIR) / "EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect",
+# )
+# @click.argument(
+#     "data_dir",
+#     type=click.Path(exists=True),
+#     default=Path(DATASET_BASE_DIR) / "EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect",
+# )
 @click.argument(
     "data_dir",
     type=click.Path(exists=True),
-    default=Path(DATASET_BASE_DIR) / "EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect",
+    default=Path(DATASET_BASE_DIR) / "EnvSpheres3D-RobotPanda-joint_joint-one-RRTConnect",
 )
 def visualize(data_dir):
     os.makedirs(os.path.join(data_dir, "figures"), exist_ok=True)
@@ -180,75 +190,76 @@ def visualize(data_dir):
 
     ########################
     # Visualize in Pybullet
+    print("========= visualize in pybullet =========")
     generate_data = GenerateDataOMPL(
         args["env_id"],
         args["robot_id"],
         min_distance_robot_env=args["min_distance_robot_env"],
-        pybullet_mode="DIRECT",
+        pybullet_mode="GUI", #"DIRECT"
         tensor_args=tensor_args,
         debug=True,
     )
 
     path = to_numpy(q_trajs_pos[0])  # select only the first trajectory (pybullet does not allow parallelization)
     generate_data.pbompl_interface.execute(path, sleep_time=5.0 / len(path))
-
+    print("========= visualize in pybullet =========")
     ########################
     # Visualize in Isaac Gym
     # POSITION CONTROL
     # add initial positions for better visualization
-    n_pre_steps = 10
-    n_post_steps = 10
+    # n_pre_steps = 10
+    # n_post_steps = 10
 
-    if isaac_gym_render_all_trajectories:
-        assert q_trajs_pos.shape[1] == 1
-        q_pos_trajs_isaac = q_trajs_pos.squeeze()
-    else:
-        q_pos_trajs_isaac = q_trajs_pos
+    # if isaac_gym_render_all_trajectories:
+    #     assert q_trajs_pos.shape[1] == 1
+    #     q_pos_trajs_isaac = q_trajs_pos.squeeze()
+    # else:
+    #     q_pos_trajs_isaac = q_trajs_pos
 
-    q_pos_trajs_isaac = q_pos_trajs_isaac.movedim(1, 0)
+    # q_pos_trajs_isaac = q_pos_trajs_isaac.movedim(1, 0)
 
-    motion_planning_isaac_env = MotionPlanningIsaacGymEnv(
-        env,
-        robot,
-        asset_root=get_robot_path().as_posix(),
-        robot_asset_file=robot.robot_urdf_file.replace(get_robot_path().as_posix() + "/", ""),
-        num_envs=q_pos_trajs_isaac.shape[1],
-        all_robots_in_one_env=True,
-        show_viewer=True,
-        sync_viewer_with_real_time=False,
-        viewer_time_between_steps=parametric_trajectory.phase_time.trajectory_duration / q_pos_trajs_isaac.shape[0],
-        render_camera_global=True,
-        render_camera_global_append_to_recorder=True,
-        color_robots=False,
-        # draw_goal_configuration=True if not args['sample_joint_position_goals_with_same_ee_pose'] else False,
-        draw_goal_configuration=False,
-        draw_collision_spheres=False,
-        draw_contact_forces=False,
-        draw_end_effector_frame=False,
-        draw_end_effector_path=True,
-        draw_ee_pose_goal=None,
-        camera_global_from_top=True if env.dim == 2 else False,
-        # add_ground_plane=False if env.dim == 2 else True,
-        add_ground_plane=False,
-    )
+    # motion_planning_isaac_env = MotionPlanningIsaacGymEnv(
+    #     env,
+    #     robot,
+    #     asset_root=get_robot_path().as_posix(),
+    #     robot_asset_file=robot.robot_urdf_file.replace(get_robot_path().as_posix() + "/", ""),
+    #     num_envs=q_pos_trajs_isaac.shape[1],
+    #     all_robots_in_one_env=True,
+    #     show_viewer=True,
+    #     sync_viewer_with_real_time=False,
+    #     viewer_time_between_steps=parametric_trajectory.phase_time.trajectory_duration / q_pos_trajs_isaac.shape[0],
+    #     render_camera_global=True,
+    #     render_camera_global_append_to_recorder=True,
+    #     color_robots=False,
+    #     # draw_goal_configuration=True if not args['sample_joint_position_goals_with_same_ee_pose'] else False,
+    #     draw_goal_configuration=False,
+    #     draw_collision_spheres=False,
+    #     draw_contact_forces=False,
+    #     draw_end_effector_frame=False,
+    #     draw_end_effector_path=True,
+    #     draw_ee_pose_goal=None,
+    #     camera_global_from_top=True if env.dim == 2 else False,
+    #     # add_ground_plane=False if env.dim == 2 else True,
+    #     add_ground_plane=False,
+    # )
 
-    motion_planning_controller = MotionPlanningControllerIsaacGym(motion_planning_isaac_env)
-    isaac_statistics = motion_planning_controller.execute_trajectories(
-        q_pos_trajs_isaac,
-        q_pos_starts=q_pos_trajs_isaac[0],
-        q_pos_goal=q_pos_trajs_isaac[-1][0],
-        n_pre_steps=n_pre_steps,
-        n_post_steps=n_post_steps,
-        make_video=True,
-        video_path=os.path.join(data_dir, f"figures/isaac-planning.mp4"),
-        make_gif=False,
-        save_step_images=True,
-    )
+    # motion_planning_controller = MotionPlanningControllerIsaacGym(motion_planning_isaac_env)
+    # isaac_statistics = motion_planning_controller.execute_trajectories(
+    #     q_pos_trajs_isaac,
+    #     q_pos_starts=q_pos_trajs_isaac[0],
+    #     q_pos_goal=q_pos_trajs_isaac[-1][0],
+    #     n_pre_steps=n_pre_steps,
+    #     n_post_steps=n_post_steps,
+    #     make_video=True,
+    #     video_path=os.path.join(data_dir, f"figures/isaac-planning.mp4"),
+    #     make_gif=False,
+    #     save_step_images=True,
+    # )
 
-    print("-----------------")
-    print(f"isaac_statistics:")
-    pprint(isaac_statistics)
-    print("-----------------")
+    # print("-----------------")
+    # print(f"isaac_statistics:")
+    # pprint(isaac_statistics)
+    # print("-----------------")
 
 
 if __name__ == "__main__":

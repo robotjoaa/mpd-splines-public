@@ -2,7 +2,8 @@
 
 git submodule update --init --recursive --progress
 
-eval "$(~/miniconda3/bin/conda shell.bash hook)"
+#eval "$(~/miniconda3/bin/conda shell.bash hook)"
+eval "$(conda shell.bash hook)"
 
 CONDA_ENV_NAME="mpd-splines-public"
 
@@ -22,7 +23,7 @@ if [ ! -d "$ISAACGYM_DIR" ]; then
   exit 1
 fi
 
-conda update -n base conda
+#conda update -n base conda
 
 conda env create -f environment.yml
 
@@ -44,9 +45,15 @@ cd ompl || exit 1
 git checkout fca10b4bd4840856c7a9f50d1ee2688ba77e25aa
 mkdir -p build/Release
 cd build/Release || exit 1
-cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON ../.. -DPYTHON_EXEC=${HOME}/miniconda3/envs/${CONDA_ENV_NAME}/bin/python
-make -j 32 update_bindings  # This step takes a lot of time.
-for _ in {1..5}; do make -j 32; done  # run multiple times to avoid errors
+# cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON ../.. -DPYTHON_EXEC=${HOME}/miniconda3/envs/${CONDA_ENV_NAME}/bin/python
+cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON ../.. -DPYTHON_EXEC=${HOME}/anaconda3/envs/${CONDA_ENV_NAME}/bin/python
+# cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON \
+#       -DPYTHON_EXEC=${HOME}/anaconda3/envs/${CONDA_ENV_NAME}/bin/python \
+#       -DFLANN_INCLUDE_DIR=/usr/include \
+#       -DFLANN_LIBRARY=/usr/lib/x86_64-linux-gnu/libflann.so \
+#       ../..
+make -j 8 update_bindings  # This step takes a lot of time.
+for _ in {1..5}; do make -j 8; done  # run multiple times to avoid errors
 cd ${DEPS_DIR}/pybullet_ompl && pip install -e .
 
 # Other necessary installs

@@ -18,6 +18,7 @@ class ParametricTrajectoryBase(abc.ABC):
     ):
         self.num_T_pts = num_T_pts
         self.trajectory_duration = trajectory_duration
+        self.dt = self.num_T_pts / self.trajectory_duration
         self.tensor_args = tensor_args
 
         self.q_pos_start = None

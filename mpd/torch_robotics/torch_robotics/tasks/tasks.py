@@ -73,6 +73,23 @@ class PlanningTask(Task):
         ################################################################################################
         # Collision fields
         # collision field for self-collision
+        self.set_collision_fields(obstacle_cutoff_margin, 
+                                  use_field_collision_self, use_field_collision_objects, use_field_collision_ws_boundaries)
+        ################################################################################################
+        # Visualization
+        self.colors = {"collision": "black", "free": "orange"}
+        self.colors_robot = {"collision": "black", "free": "darkorange"}
+        self.cmaps = {"collision": "Greys", "free": "Oranges"}
+        self.cmaps_robot = {"collision": "Greys", "free": "YlOrRd"}
+
+        self.is_dynamic = False
+
+    def set_collision_fields(self, 
+                            obstacle_cutoff_margin,
+                            use_field_collision_self,
+                            use_field_collision_objects,
+                            use_field_collision_ws_boundaries
+        ) : 
         self.df_collision_self = self.robot.df_collision_self
 
         # collision field for objects
@@ -118,13 +135,6 @@ class PlanningTask(Task):
             self.df_collision_objects,
             self.df_collision_ws_boundaries,
         ]
-
-        ################################################################################################
-        # Visualization
-        self.colors = {"collision": "black", "free": "orange"}
-        self.colors_robot = {"collision": "black", "free": "darkorange"}
-        self.cmaps = {"collision": "Greys", "free": "Oranges"}
-        self.cmaps_robot = {"collision": "Greys", "free": "YlOrRd"}
 
     def set_q_pos_start_goal(self, q_pos_start, q_pos_goal, **kwargs):
         self.q_pos_start = q_pos_start
@@ -315,6 +325,7 @@ class PlanningTask(Task):
     def get_trajs_unvalid_and_valid(
         self, q_trajs, return_indices=False, num_interpolation=0, filter_joint_limits_vel_acc=False, **kwargs
     ):
+        #print("get_trajs_unvalid_and_valid")
         assert q_trajs.ndim == 3 or q_trajs.ndim == 4
         N = 1
         if q_trajs.ndim == 4:  # n_goals (or steps), batch of trajectories, length, dim
@@ -506,43 +517,65 @@ class PlanningTask(Task):
         idxs = np.round(np.linspace(0, H - 1, n_frames)).astype(int)
         q_pos_trajs_selection = q_pos_trajs[:, idxs, :]
 
+        # Precompute collisions for all frames at once (batch, n_frames)
+        collisions_all = self.compute_collision(q_pos_trajs_selection, margin=0.0)  # (batch, n_frames)
+
+        # Precompute trajectory colors if plotting full trajectories
+        traj_colors = None
+        if plot_x_trajs and q_pos_trajs is not None:
+            # Compute collisions for full trajectory ONCE
+            _, q_trajs_coll_idxs, _, q_trajs_free_idxs, _ = self.get_trajs_unvalid_and_valid(
+                q_pos_trajs, return_indices=True, **kwargs
+            )
+            traj_colors = []
+            for i in range(len(q_trajs_coll_idxs) + len(q_trajs_free_idxs)):
+                traj_colors.append(
+                    self.colors["collision"] if i in q_trajs_coll_idxs else self.colors["free"]
+                )
+
         fig, ax = create_fig_and_axes(dim=self.env.dim)
 
         def animate_fn(i, ax):
             ax.clear()
             if not remove_title:
                 ax.set_title(f"step: {idxs[i]}/{H-1}")
-            if plot_x_trajs:
-                self.render_robot_trajectories(
-                    fig=fig, ax=ax, q_pos_trajs=q_pos_trajs, q_pos_start=q_pos_start, q_pos_goal=q_pos_goal, **kwargs
-                )
-            else:
-                self.env.render(ax)
 
-            # TODO - implement batched version
+            # Render environment
+            self.env.render(ax)
+            if plot_x_trajs:
+                # Render trajectories with precomputed colors (avoid recomputing collisions!)
+                if traj_colors is not None:
+                    render_kwargs = kwargs.copy()
+                    render_kwargs["colors"] = traj_colors
+                    self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs, **render_kwargs)
+
+            # Get precomputed collisions for current frame
             qs = q_pos_trajs_selection[:, i, :]  # batch, q_dim
             if qs.ndim == 1:
                 qs = qs.unsqueeze(0)  # interface (batch, q_dim)
-            for q in qs:
+
+            # Render each robot with precomputed collision status
+            for idx, q in enumerate(qs):
+                is_collision = collisions_all[idx, i] if collisions_all.ndim > 1 else collisions_all
                 self.robot.render(
                     ax,
                     q_pos=q,
                     color=(
                         self.colors_robot["collision"]
-                        if self.compute_collision(q, margin=0.0)
+                        if is_collision
                         else self.colors_robot["free"]
                     ),
                     arrow_length=0.1,
                     arrow_alpha=0.5,
                     arrow_linewidth=1.0,
-                    cmap=self.cmaps["collision"] if self.compute_collision(q, margin=0.0) else self.cmaps["free"],
+                    cmap=self.cmaps["collision"] if is_collision else self.cmaps["free"],
                     **kwargs,
                 )
 
             if q_pos_start is not None:
-                self.robot.render(ax, q_pos_start, color="blue", cmap="Greens", **kwargs)
+                self.robot.render(ax, q_pos_start, color="green", cmap="Greens", **kwargs)
             if q_pos_goal is not None:
-                self.robot.render(ax, q_pos_goal, color="red", cmap="Purples", **kwargs)
+                self.robot.render(ax, q_pos_goal, color="purple", cmap="Purples", **kwargs)
 
             process_axes(ax)
 

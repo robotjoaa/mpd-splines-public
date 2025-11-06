@@ -18,6 +18,7 @@ from mpd.paths import DATASET_BASE_DIR
 from mpd.utils import model_loader
 from torch_robotics import environments, robots
 from torch_robotics.tasks.tasks import PlanningTask
+from torch_robotics.tasks.dynamic_tasks import DynPlanningTask
 from torch_robotics.torch_utils.torch_utils import freeze_torch_model_params, DEFAULT_TENSOR_ARGS
 
 
@@ -140,7 +141,16 @@ def get_planning_task_and_dataset(
     else:
         raise ValueError(f"Unknown parametric trajectory class: {parametric_trajectory_class}")
 
-    planning_task = PlanningTask(
+    # Use DynPlanningTask for dynamic environments, otherwise use PlanningTask
+    # Check if env is dynamic by looking for EnvDynBase characteristics
+    is_dynamic_env = (
+        hasattr(env, '_has_moving_objects') or
+        hasattr(env, 'time_range') or
+        (hasattr(env, 'is_static') and not env.is_static)
+    )
+
+    TaskClass = DynPlanningTask if is_dynamic_env else PlanningTask
+    planning_task = TaskClass(
         env=env,
         robot=robot,
         parametric_trajectory=parametric_trajectory,

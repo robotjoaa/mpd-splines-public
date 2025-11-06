@@ -413,7 +413,9 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
                 hard_conds[horizon - 1] = cps_goal_normalized
                 if self.planning_task.parametric_trajectory.zero_vel_at_start_and_goal:
                     hard_conds[horizon - 2] = cps_goal_normalized
-                if self.planning_task.plannerlf.zero_acc_at_start_and_goal:
+                # typo?
+                #if self.planning_task.plannerlf.zero_acc_at_start_and_goal:
+                if self.planning_task.parametric_trajectory.zero_acc_at_start_and_goal:
                     hard_conds[horizon - 3] = cps_goal_normalized
 
         return hard_conds

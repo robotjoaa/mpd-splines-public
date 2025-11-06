@@ -2,12 +2,12 @@ import numpy as np
 import torch
 from matplotlib import pyplot as plt
 
-from mpd.torch_robotics.torch_robotics.environments.env_base import EnvBase
-from mpd.torch_robotics.torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
-from mpd.torch_robotics.torch_robotics.environments.utils import create_grid_spheres
-import mpd.torch_robotics.torch_robotics.robots as tr_robots
-from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
-from mpd.torch_robotics.torch_robotics.visualizers.plot_utils import create_fig_and_axes
+from .env_base import EnvBase
+from .primitives import ObjectField, MultiSphereField, MultiBoxField
+from .utils import create_grid_spheres
+import torch_robotics.robots as tr_robots
+from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
+from torch_robotics.visualizers.plot_utils import create_fig_and_axes
 
 
 class EnvDense2D(EnvBase):

@@ -40,6 +40,8 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
         self.parametric_trajectory = parametric_trajectory
 
     def object_signed_distances(self, link_pos, get_gradient=False, timesteps=None, **kwargs):
+        #print("link pos : ",link_pos.shape) # batch, horizon, num_links, dim or (batch horizon), num_links, dim
+
         """
         Compute signed distances to time-varying objects.
 
@@ -57,7 +59,9 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
         if self.df_time_varying_obj_fn is None:
             return torch.inf
 
-        df_time_varying = self.df_time_varying_obj_fn()
+        df_obj_list = self.df_time_varying_obj_fn()
+        if not isinstance(df_obj_list, list):
+            df_obj_list = [df_obj_list]
 
         # Get timesteps if not provided
         if timesteps is None:
@@ -72,19 +76,10 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             batch_size, horizon, num_links, dim = original_shape
             link_pos_flat = einops.rearrange(link_pos, "b h l d -> (b h) l d")
 
-            # Expand timesteps to match batch dimension
-            if timesteps.ndim == 1:
-                # timesteps shape: (horizon,) -> (batch, horizon) -> (batch*horizon,)
-                timesteps_expanded = timesteps.unsqueeze(0).expand(batch_size, horizon)
-                timesteps_flat = einops.rearrange(timesteps_expanded, "b h -> (b h)")
-            else:
-                # timesteps shape: (batch, horizon) -> (batch*horizon,)
-                timesteps_flat = einops.rearrange(timesteps, "b h -> (b h)")
         elif len(original_shape) == 3:
             # Shape: (batch*horizon, num_links, dim)
             batch_horizon, num_links, dim = original_shape
             link_pos_flat = link_pos
-            timesteps_flat = timesteps  # Assume already flat
 
             # Try to infer batch and horizon
             if self.parametric_trajectory is not None:
@@ -94,8 +89,19 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
                 # Cannot reshape without knowing structure
                 batch_size = 1
                 horizon = batch_horizon
+
         else:
             raise ValueError(f"Unexpected link_pos shape: {original_shape}")
+        
+        # Expand timesteps to match batch dimension
+        if timesteps.ndim == 1:
+            # timesteps shape: (horizon,) -> (batch, horizon) -> (batch*horizon,)
+            timesteps_expanded = timesteps.unsqueeze(0).expand(batch_size, horizon)
+            timesteps_flat = einops.rearrange(timesteps_expanded, "b h -> (b h)")
+        else:
+            # timesteps shape: (batch, horizon) -> (batch*horizon,)
+            timesteps_flat = einops.rearrange(timesteps, "b h -> (b h)")
+
 
         # Flatten for vectorized query
         # link_pos_flat: (batch*horizon, num_links, dim)
@@ -104,6 +110,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
 
         # Expand timesteps to match link dimension
         # timesteps_for_links: (batch*horizon, num_links)
+        #print("object signed distance",timesteps.shape, timesteps_flat.shape)
         timesteps_for_links = timesteps_flat.unsqueeze(-1).expand(bh, num_links)
 
         # Reshape for query
@@ -111,21 +118,27 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
         link_pos_query = link_pos_flat.reshape(-1, dim)
         timesteps_query = timesteps_for_links.reshape(-1)
 
-        # Query time-varying SDF
+        # Query time-varying SDF for all objects
+        dfs = []
         if get_gradient:
-            sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
-                link_pos_query, timesteps_query, get_gradient=True
-            )
-            # sdf_vals: (batch*horizon*num_links,)
-            # sdf_gradient: (batch*horizon*num_links, dim)
+            dfs_gradient = []
+            for df_time_varying in df_obj_list:
+                sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
+                    link_pos_query, timesteps=timesteps_query, get_gradient=True
+                )
+                # sdf_vals: (batch*horizon*num_links,)
+                # sdf_gradient: (batch*horizon*num_links, dim)
 
-            # Reshape back
-            sdf_vals = sdf_vals.reshape(bh, num_links)
-            sdf_gradient = sdf_gradient.reshape(bh, num_links, dim)
+                # Reshape back
+                sdf_vals = sdf_vals.reshape(bh, num_links)
+                sdf_gradient = sdf_gradient.reshape(bh, num_links, dim)
 
-            # Add object dimension (assuming single time-varying object field)
-            sdf_vals = sdf_vals.unsqueeze(-2)  # (bh, 1, num_links)
-            sdf_gradient = sdf_gradient.unsqueeze(-3)  # (bh, 1, num_links, dim)
+                dfs.append(sdf_vals)
+                dfs_gradient.append(sdf_gradient)
+
+            # Stack along object dimension: (bh, num_sdfs, num_links)
+            sdf_vals = torch.stack(dfs, dim=-2)
+            sdf_gradient = torch.stack(dfs_gradient, dim=-3)
 
             # Reshape to (batch, horizon, num_sdfs, num_links) format
             if len(original_shape) == 4:
@@ -134,16 +147,18 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
 
             return sdf_vals, sdf_gradient
         else:
-            sdf_vals = df_time_varying.compute_signed_distance(
-                link_pos_query, timesteps_query, get_gradient=False
-            )
-            # sdf_vals: (batch*horizon*num_links,)
+            for df_time_varying in df_obj_list:
+                sdf_vals = df_time_varying.compute_signed_distance(
+                    link_pos_query, timesteps=timesteps_query, get_gradient=False
+                )
+                # sdf_vals: (batch*horizon*num_links,)
 
-            # Reshape back
-            sdf_vals = sdf_vals.reshape(bh, num_links)
+                # Reshape back
+                sdf_vals = sdf_vals.reshape(bh, num_links)
+                dfs.append(sdf_vals)
 
-            # Add object dimension
-            sdf_vals = sdf_vals.unsqueeze(-2)  # (bh, 1, num_links)
+            # Stack along object dimension: (bh, num_sdfs, num_links)
+            sdf_vals = torch.stack(dfs, dim=-2)
 
             # Reshape to (batch, horizon, num_sdfs, num_links) format
             if len(original_shape) == 4:
@@ -152,6 +167,13 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             return sdf_vals
 
     def compute_distance_field_cost_and_gradient(self, link_pos, timesteps=None, **kwargs):
+        # position link_pos tensor # batch x num_links x env_dim (2D or 3D)
+        embodiment_cost, embodiment_cost_gradient = self.compute_embodiment_taskspace_sdf_and_gradient(
+            link_pos, timesteps, **kwargs
+        )
+        return embodiment_cost, embodiment_cost_gradient
+
+    def compute_embodiment_taskspace_sdf_and_gradient(self, link_pos, timesteps=None, **kwargs):
         """
         Compute collision cost and gradient for time-varying obstacles.
 
@@ -188,167 +210,172 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
                 # Multiple objects - take max
                 margin_minus_sdf_clamped, idxs_max = margin_minus_sdf_clamped.max(-2)
                 # Gather corresponding gradients
+                # sdf_gradient = sdf_gradient.gather(
+                #     -3, idxs_max.unsqueeze(-3).unsqueeze(-1).expand(*sdf_gradient.shape[:-3], 1, *sdf_gradient.shape[-2:])
+                # ).squeeze(-3)
                 sdf_gradient = sdf_gradient.gather(
-                    -3, idxs_max.unsqueeze(-3).unsqueeze(-1).expand(*sdf_gradient.shape[:-3], 1, *sdf_gradient.shape[-2:])
-                ).squeeze(-3)
+                    2, idxs_max.unsqueeze(2).unsqueeze(-1).expand(-1, -1, -1, -1, sdf_gradient.shape[-1])
+                ).squeeze(2)
 
         # Set gradient to zero where not in collision
         idxs = torch.argwhere(margin_minus_sdf_clamped <= 0)
+        # if idxs.numel() > 0:
+        #     if sdf_gradient.ndim == 3:  # (bh, num_links, dim)
+        #         sdf_gradient[idxs[:, 0], idxs[:, 1], :] = 0.0
+        #     elif sdf_gradient.ndim == 4:  # (b, h, num_links, dim)
+        #         sdf_gradient[idxs[:, 0], idxs[:, 1], idxs[:, 2], :] = 0.0
+        
         if idxs.numel() > 0:
-            if sdf_gradient.ndim == 3:  # (bh, num_links, dim)
-                sdf_gradient[idxs[:, 0], idxs[:, 1], :] = 0.0
-            elif sdf_gradient.ndim == 4:  # (b, h, num_links, dim)
-                sdf_gradient[idxs[:, 0], idxs[:, 1], idxs[:, 2], :] = 0.0
-
+            sdf_gradient[idxs[:, 0], idxs[:, 1], idxs[:, 2], :] = 0.0
         # Gradient sign (cost increases as we move into obstacle)
         sdf_gradient = -1.0 * sdf_gradient
 
         return margin_minus_sdf_clamped, sdf_gradient
 
 
-class CombinedCollisionDistanceField(EmbodimentDistanceFieldBase):
-    """
-    Combined collision distance field handling both static and time-varying obstacles.
+# class CombinedCollisionDistanceField(EmbodimentDistanceFieldBase):
+#     """
+#     Combined collision distance field handling both static and time-varying obstacles.
 
-    This class combines:
-    - Static obstacles (via CollisionObjectDistanceField)
-    - Time-varying obstacles (via CollisionObjectDistanceFieldTimeVarying)
-    """
+#     This class combines:
+#     - Static obstacles (via CollisionObjectDistanceField)
+#     - Time-varying obstacles (via CollisionObjectDistanceFieldTimeVarying)
+#     """
 
-    def __init__(
-        self,
-        robot,
-        df_static_obj_list_fn=None,
-        df_time_varying_obj_fn=None,
-        parametric_trajectory=None,
-        **kwargs
-    ):
-        """
-        Args:
-            robot: Robot instance
-            df_static_obj_list_fn: Function returning list of static SDF objects
-            df_time_varying_obj_fn: Function returning GridMapSDFTimeVarying
-            parametric_trajectory: ParametricTrajectory instance
-            **kwargs: Additional arguments passed to parent
-        """
-        super().__init__(robot=robot, **kwargs)
+#     def __init__(
+#         self,
+#         robot,
+#         df_static_obj_list_fn=None,
+#         df_time_varying_obj_fn=None,
+#         parametric_trajectory=None,
+#         **kwargs
+#     ):
+#         """
+#         Args:
+#             robot: Robot instance
+#             df_static_obj_list_fn: Function returning list of static SDF objects
+#             df_time_varying_obj_fn: Function returning GridMapSDFTimeVarying
+#             parametric_trajectory: ParametricTrajectory instance
+#             **kwargs: Additional arguments passed to parent
+#         """
+#         super().__init__(robot=robot, **kwargs)
 
-        from torch_robotics.torch_planning_objectives.fields.distance_fields import CollisionObjectDistanceField
+#         from torch_robotics.torch_planning_objectives.fields.distance_fields import CollisionObjectDistanceField
 
-        self.df_static = None
-        if df_static_obj_list_fn is not None:
-            self.df_static = CollisionObjectDistanceField(
-                robot,
-                df_obj_list_fn=df_static_obj_list_fn,
-                link_margins_for_object_collision_checking_tensor=robot.link_collision_spheres_radii,
-                cutoff_margin=self.cutoff_margin,
-                clamp_sdf=self.clamp_sdf,
-                tensor_args=self.tensor_args
-            )
+#         self.df_static = None
+#         if df_static_obj_list_fn is not None:
+#             self.df_static = CollisionObjectDistanceField(
+#                 robot,
+#                 df_obj_list_fn=df_static_obj_list_fn,
+#                 link_margins_for_object_collision_checking_tensor=robot.link_collision_spheres_radii,
+#                 cutoff_margin=self.cutoff_margin,
+#                 clamp_sdf=self.clamp_sdf,
+#                 tensor_args=self.tensor_args
+#             )
 
-        self.df_time_varying = None
-        if df_time_varying_obj_fn is not None:
-            self.df_time_varying = CollisionObjectDistanceFieldTimeVarying(
-                robot,
-                df_time_varying_obj_fn=df_time_varying_obj_fn,
-                parametric_trajectory=parametric_trajectory,
-                link_margins_for_object_collision_checking_tensor=robot.link_collision_spheres_radii,
-                cutoff_margin=self.cutoff_margin,
-                clamp_sdf=self.clamp_sdf,
-                tensor_args=self.tensor_args
-            )
+#         self.df_time_varying = None
+#         if df_time_varying_obj_fn is not None:
+#             self.df_time_varying = CollisionObjectDistanceFieldTimeVarying(
+#                 robot,
+#                 df_time_varying_obj_fn=df_time_varying_obj_fn,
+#                 parametric_trajectory=parametric_trajectory,
+#                 link_margins_for_object_collision_checking_tensor=robot.link_collision_spheres_radii,
+#                 cutoff_margin=self.cutoff_margin,
+#                 clamp_sdf=self.clamp_sdf,
+#                 tensor_args=self.tensor_args
+#             )
 
-    def compute_embodiment_signed_distances(self, q_pos, link_pos, timesteps=None, **kwargs):
-        """
-        Compute signed distances to both static and time-varying obstacles.
+#     def compute_embodiment_signed_distances(self, q_pos, link_pos, timesteps=None, **kwargs):
+#         """
+#         Compute signed distances to both static and time-varying obstacles.
 
-        Args:
-            q_pos: Joint positions
-            link_pos: Link positions
-            timesteps: Time values for time-varying obstacles
+#         Args:
+#             q_pos: Joint positions
+#             link_pos: Link positions
+#             timesteps: Time values for time-varying obstacles
 
-        Returns:
-            Combined signed distances
-        """
-        dfs = []
+#         Returns:
+#             Combined signed distances
+#         """
+#         dfs = []
 
-        # Static obstacles
-        if self.df_static is not None:
-            sdf_static = self.df_static.object_signed_distances(link_pos, get_gradient=False, **kwargs)
-            dfs.append(sdf_static)
+#         # Static obstacles
+#         if self.df_static is not None:
+#             sdf_static = self.df_static.object_signed_distances(link_pos, get_gradient=False, **kwargs)
+#             dfs.append(sdf_static)
 
-        # Time-varying obstacles
-        if self.df_time_varying is not None:
-            sdf_time_varying = self.df_time_varying.object_signed_distances(
-                link_pos, get_gradient=False, timesteps=timesteps, **kwargs
-            )
-            dfs.append(sdf_time_varying)
+#         # Time-varying obstacles
+#         if self.df_time_varying is not None:
+#             sdf_time_varying = self.df_time_varying.object_signed_distances(
+#                 link_pos, get_gradient=False, timesteps=timesteps, **kwargs
+#             )
+#             dfs.append(sdf_time_varying)
 
-        if len(dfs) == 0:
-            return torch.inf
+#         if len(dfs) == 0:
+#             return torch.inf
 
-        # Combine (take minimum across all objects)
-        return torch.cat(dfs, dim=-2)  # Concatenate along object dimension
+#         # Combine (take minimum across all objects)
+#         return torch.cat(dfs, dim=-2)  # Concatenate along object dimension
 
-    def compute_embodiment_collision(self, q_pos, link_pos, timesteps=None, **kwargs):
-        """
-        Check collision with both static and time-varying obstacles.
+#     def compute_embodiment_collision(self, q_pos, link_pos, timesteps=None, **kwargs):
+#         """
+#         Check collision with both static and time-varying obstacles.
 
-        Args:
-            q_pos: Joint positions
-            link_pos: Link positions
-            timesteps: Time values
+#         Args:
+#             q_pos: Joint positions
+#             link_pos: Link positions
+#             timesteps: Time values
 
-        Returns:
-            Boolean collision indicator
-        """
-        cutoff_margin = kwargs.get("margin", self.cutoff_margin)
-        margin = self.collision_margins + cutoff_margin
+#         Returns:
+#             Boolean collision indicator
+#         """
+#         cutoff_margin = kwargs.get("margin", self.cutoff_margin)
+#         margin = self.collision_margins + cutoff_margin
 
-        signed_distances = self.compute_embodiment_signed_distances(
-            q_pos, link_pos, timesteps=timesteps, **kwargs
-        )
+#         signed_distances = self.compute_embodiment_signed_distances(
+#             q_pos, link_pos, timesteps=timesteps, **kwargs
+#         )
 
-        collisions = signed_distances <= margin
-        any_collision = torch.any(torch.any(collisions, dim=-1), dim=-1)
+#         collisions = signed_distances <= margin
+#         any_collision = torch.any(torch.any(collisions, dim=-1), dim=-1)
 
-        return any_collision
+#         return any_collision
 
-    def compute_embodiment_rbf_distances(self, *args, **kwargs):
-        """RBF distances not implemented for combined field."""
-        raise NotImplementedError("RBF distances not implemented for combined collision field")
+#     def compute_embodiment_rbf_distances(self, *args, **kwargs):
+#         """RBF distances not implemented for combined field."""
+#         raise NotImplementedError("RBF distances not implemented for combined collision field")
 
-    def compute_distance_field_cost_and_gradient(self, link_pos, timesteps=None, **kwargs):
-        """
-        Compute combined cost and gradient from static and time-varying obstacles.
+#     def compute_distance_field_cost_and_gradient(self, link_pos, timesteps=None, **kwargs):
+#         """
+#         Compute combined cost and gradient from static and time-varying obstacles.
 
-        Args:
-            link_pos: Link positions
-            timesteps: Time values
+#         Args:
+#             link_pos: Link positions
+#             timesteps: Time values
 
-        Returns:
-            Combined cost and gradient
-        """
-        cost_total = 0.0
-        gradient_total = 0.0
+#         Returns:
+#             Combined cost and gradient
+#         """
+#         cost_total = 0.0
+#         gradient_total = 0.0
 
-        # Static obstacles
-        if self.df_static is not None:
-            cost_static, grad_static = self.df_static.compute_distance_field_cost_and_gradient(
-                link_pos, **kwargs
-            )
-            cost_total = cost_total + cost_static
-            gradient_total = gradient_total + grad_static
+#         # Static obstacles
+#         if self.df_static is not None:
+#             cost_static, grad_static = self.df_static.compute_distance_field_cost_and_gradient(
+#                 link_pos, **kwargs
+#             )
+#             cost_total = cost_total + cost_static
+#             gradient_total = gradient_total + grad_static
 
-        # Time-varying obstacles
-        if self.df_time_varying is not None:
-            cost_tv, grad_tv = self.df_time_varying.compute_distance_field_cost_and_gradient(
-                link_pos, timesteps=timesteps, **kwargs
-            )
-            cost_total = cost_total + cost_tv
-            gradient_total = gradient_total + grad_tv
+#         # Time-varying obstacles
+#         if self.df_time_varying is not None:
+#             cost_tv, grad_tv = self.df_time_varying.compute_distance_field_cost_and_gradient(
+#                 link_pos, timesteps=timesteps, **kwargs
+#             )
+#             cost_total = cost_total + cost_tv
+#             gradient_total = gradient_total + grad_tv
 
-        return cost_total, gradient_total
+#         return cost_total, gradient_total
 
 
 if __name__ == "__main__":

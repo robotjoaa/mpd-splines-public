@@ -54,9 +54,9 @@ def experiment(
     ########################################################################
     # Visualization options
     render_joint_space_time_iters: bool = True,
-    render_joint_space_env_iters: bool = False,
-    render_env_robot_opt_iters: bool = False,
-    render_env_robot_trajectories: bool = False,
+    render_joint_space_env_iters: bool = True,
+    render_env_robot_opt_iters: bool = True,
+    render_env_robot_trajectories: bool = True,
     render_pybullet: bool = False,
     draw_collision_spheres: bool = False,
     run_evaluation_issac_gym: bool = False,
@@ -256,7 +256,7 @@ def experiment(
                     q_pos_goal=q_trajs_pos[-1][0],  # add steps for better visualization
                     n_pre_steps=5 if render_isaacgym_viewer or render_isaacgym_movie else 0,
                     n_post_steps=5 if render_isaacgym_viewer or render_isaacgym_movie else 0,
-                    stop_robot_if_in_contact=False,
+                    stop_robot_if_in_contact=False, #Only valid trajectories are given
                     make_video=render_isaacgym_movie,
                     video_duration=args_inference.trajectory_duration,
                     video_path=os.path.join(results_dir, f"isaacgym-{idx_sg:03d}.mp4"),

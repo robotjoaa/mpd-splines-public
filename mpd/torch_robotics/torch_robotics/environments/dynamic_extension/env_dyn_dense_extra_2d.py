@@ -9,18 +9,18 @@ import numpy as np
 import torch
 from matplotlib import pyplot as plt
 
-from mpd.torch_robotics.torch_robotics.environments.env_dense_2d import EnvDense2D
-from mpd.torch_robotics.torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
-from mpd.torch_robotics.torch_robotics.environments.dynamic_extension import (
+from torch_robotics.environments.env_dense_2d import EnvDense2D
+from torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
+from torch_robotics.environments.dynamic_extension import (
     EnvDynBase,
     MovingObjectField,
     LinearTrajectory
 )
-from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
-from mpd.torch_robotics.torch_robotics.visualizers.plot_utils import create_fig_and_axes
+from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
+from torch_robotics.visualizers.plot_utils import create_fig_and_axes
 
 
-class EnvDense2DDynExtraObjects(EnvDynBase):
+class EnvDynDense2DExtraObjects(EnvDynBase):
     """
     EnvDense2D environment with moving obstacles using the wrapper pattern.
 
@@ -32,8 +32,9 @@ class EnvDense2DDynExtraObjects(EnvDynBase):
     def __init__(
         self,
         time_range=(0.0, 5.0),
-        k_smooth=30.0,
+        k_smooth=0.05,
         smoothing_method="Quadratic",
+        no_smoothing=False,
         tensor_args=DEFAULT_TENSOR_ARGS,
         **kwargs
     ):
@@ -63,7 +64,7 @@ class EnvDense2DDynExtraObjects(EnvDynBase):
         )
 
         traj_sphere = LinearTrajectory(
-            keyframe_times=[0.0, 5.0],
+            keyframe_times=[0.0, 10.0],
             keyframe_positions=[
                 [1.0, -1.0, 0.0],
                 [-1.0, 1.0, 0.0]
@@ -95,7 +96,7 @@ class EnvDense2DDynExtraObjects(EnvDynBase):
         )
 
         traj_box = LinearTrajectory(
-            keyframe_times=[0.0, 5.0],
+            keyframe_times=[0.0, 10.0],
             keyframe_positions=[
                 [-1.0, 1.0, 0.0],
                 [1.0, -1.0, 0.0]
@@ -121,6 +122,7 @@ class EnvDense2DDynExtraObjects(EnvDynBase):
             time_range=time_range,
             k_smooth=k_smooth,
             smoothing_method=smoothing_method,
+            no_smoothing=no_smoothing,
             tensor_args=tensor_args,
         )
 
@@ -129,9 +131,13 @@ if __name__ == "__main__":
     tensor_args = DEFAULT_TENSOR_ARGS
 
     # Create environment with moving obstacles
-    env = EnvDense2DDynExtraObjects(
+    env = EnvDynDense2DExtraObjects(
         precompute_sdf_obj_fixed=True,
-        sdf_cell_size=0.01,
+        sdf_cell_size = 0.01,
+        time_range = (0.0, 10.0),
+        k_smooth=0.05,
+        smoothing_method=None,
+        no_smoothing=True,
         tensor_args=tensor_args
     )
 
@@ -144,17 +150,18 @@ if __name__ == "__main__":
 
     # Test 1: Render at different times
     print("\nTest 1: Rendering at different times")
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    #fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    #times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    times = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
 
-    for ax, t in zip(axes.flat, times):
-        env.render(ax, time=t)
-        ax.set_title(f"t = {t:.1f}s")
+    # for ax, t in zip(axes.flat, times):
+    #     env.render(ax, time=t)
+    #     ax.set_title(f"t = {t:.1f}s")
 
-    plt.tight_layout()
-    plt.savefig('/tmp/env_dyn_extra_2d_rendering.png', dpi=150)
-    print("  Saved to /tmp/env_dyn_extra_2d_rendering.png")
-    plt.close()
+    # plt.tight_layout()
+    # plt.savefig('/tmp/env_dyn_extra_2d_rendering.png', dpi=150)
+    # print("  Saved to /tmp/env_dyn_extra_2d_rendering.png")
+    # plt.close()
 
     # Test 2: Render SDF at different times
     print("\nTest 2: Time-varying SDF")
@@ -171,8 +178,12 @@ if __name__ == "__main__":
 
     # Test 3: Animate environment
     print("\nTest 3: Creating animation")
+
+    # Create time steps array for animation
+    time_steps = torch.linspace(0.0, 10.0, 100, **tensor_args)
+
     env.animate_with_time(
-        time_range=(0.0, 5.0),
+        trajectory_time_steps=time_steps,
         n_frames=50,
         video_filepath='/tmp/env_dyn_extra_2d_animation.mp4',
         show_time_label=True,
@@ -181,27 +192,27 @@ if __name__ == "__main__":
     )
     print("  Saved animation to /tmp/env_dyn_extra_2d_animation.mp4")
 
-    # Test 4: Test SDF queries at specific points over time
-    print("\nTest 4: SDF queries over time")
-    test_points = torch.tensor([
-        [0.0, 0.0],
-        [0.5, 0.5],
-        [-0.5, -0.5],
-    ], **tensor_args)
+    # # Test 4: Test SDF queries at specific points over time
+    # print("\nTest 4: SDF queries over time")
+    # test_points = torch.tensor([
+    #     [0.0, 0.0],
+    #     [0.5, 0.5],
+    #     [-0.5, -0.5],
+    # ], **tensor_args)
 
-    for point in test_points:
-        print(f"\n  Point {point.cpu().numpy()}:")
-        for t in [0.0, 2.5, 5.0]:
-            sdf_val = env.compute_sdf(point.unsqueeze(0).unsqueeze(0), time=t)
-            collision_str = " [COLLISION]" if sdf_val.item() < 0 else ""
-            print(f"    t={t:.1f}s: SDF = {sdf_val.item():+.4f}{collision_str}")
+    # for point in test_points:
+    #     print(f"\n  Point {point.cpu().numpy()}:")
+    #     for t in [0.0, 2.5, 5.0]:
+    #         sdf_val = env.compute_sdf(point.unsqueeze(0).unsqueeze(0), time=t)
+    #         collision_str = " [COLLISION]" if sdf_val.item() < 0 else ""
+    #         print(f"    t={t:.1f}s: SDF = {sdf_val.item():+.4f}{collision_str}")
 
-    print("\n" + "="*70)
-    print("All tests completed!")
-    print("="*70)
-    print("\nKey features demonstrated:")
-    print("  - EnvDynBase wraps existing EnvBase-based environments")
-    print("  - MovingObjectField automatically handled in rendering")
-    print("  - MovingObjectField automatically handled in SDF computation")
-    print("  - Time-aware animations")
-    print("  - Smooth union for overlapping obstacles")
+    # print("\n" + "="*70)
+    # print("All tests completed!")
+    # print("="*70)
+    # print("\nKey features demonstrated:")
+    # print("  - EnvDynBase wraps existing EnvBase-based environments")
+    # print("  - MovingObjectField automatically handled in rendering")
+    # print("  - MovingObjectField automatically handled in SDF computation")
+    # print("  - Time-aware animations")
+    # print("  - Smooth union for overlapping obstacles")

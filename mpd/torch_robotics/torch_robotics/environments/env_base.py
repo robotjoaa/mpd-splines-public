@@ -6,12 +6,12 @@ import torch
 from matplotlib import pyplot as plt
 from torch.autograd.functional import jacobian
 
-from mpd.torch_robotics.torch_robotics.environments.grid_map_sdf import GridMapSDF
-from mpd.torch_robotics.torch_robotics.environments.occupancy_map import OccupancyMap
-from mpd.torch_robotics.torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
-from mpd.torch_robotics.torch_robotics.torch_utils.torch_timer import TimerCUDA
-from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import to_numpy, DEFAULT_TENSOR_ARGS
-from mpd.torch_robotics.torch_robotics.visualizers.plot_utils import create_fig_and_axes
+from .grid_map_sdf import GridMapSDF
+from .occupancy_map import OccupancyMap
+from .primitives import ObjectField, MultiSphereField, MultiBoxField
+from torch_robotics.torch_utils.torch_timer import TimerCUDA
+from torch_robotics.torch_utils.torch_utils import to_numpy, DEFAULT_TENSOR_ARGS
+from torch_robotics.visualizers.plot_utils import create_fig_and_axes
 
 
 class EnvBase(ABC):

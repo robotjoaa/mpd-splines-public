@@ -19,7 +19,6 @@ from .sdf_utils import (
 )
 
 from .env_dyn_base import EnvDynBase
-from .env_dyn_simple_2d import EnvDynSimple2DExtraObjects
 
 from .moving_primitives import (
     MovingObjectField,
@@ -30,11 +29,6 @@ from .trajectory import (
     TrajectoryInterpolator,
     LinearTrajectory,
     CircularTrajectory
-)
-
-from .task_extensions import (
-    animate_robot_trajectories_with_time,
-    render_robot_trajectories_with_time
 )
 
 __all__ = [
@@ -48,7 +42,6 @@ __all__ = [
 
     # Environment (wrapper-based)
     'EnvDynBase',
-    'EnvDynSimple2DExtraObjects',
 
     # Trajectory classes
     'TrajectoryInterpolator',
@@ -58,8 +51,4 @@ __all__ = [
     # Moving primitives
     'MovingObjectField',
     'create_moving_objects_from_trajectories',
-
-    # Task extensions
-    'animate_robot_trajectories_with_time',
-    'render_robot_trajectories_with_time',
 ]

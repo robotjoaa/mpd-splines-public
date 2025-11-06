@@ -8,6 +8,10 @@ import cv2
 import imageio
 import matplotlib
 import numpy as np
+
+from mpd.utils.patches import numpy_monkey_patch
+numpy_monkey_patch()
+
 from dotmap import DotMap
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 from moviepy.video.io.VideoFileClip import VideoFileClip
@@ -34,6 +38,9 @@ from torch_robotics.trajectory.utils import interpolate_points_v1
 from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device, to_numpy
 
+from torch_robotics.environments.dynamic_extension.moving_primitives import MovingObjectField
+
+
 
 GYM_COLORS = {
     "purple": gymapi.Vec3(128 / 255.0, 0.0, 128 / 255.0),
@@ -42,6 +49,12 @@ GYM_COLORS = {
     "red": gymapi.Vec3(1.0, 0.0, 0.0),
 }
 
+def transform_to_tensor(t , **tensor_args) : 
+    data = [
+        t.p.x, t.p.y, t.p.z,
+        t.r.x, t.r.y, t.r.z, t.r.w
+    ]
+    return torch.tensor(data, **tensor_args)
 
 def set_object_position_and_orientation(obj_pos, obj_ori):
     # set position and orientation
@@ -50,16 +63,48 @@ def set_object_position_and_orientation(obj_pos, obj_ori):
     obj_pose.r = gymapi.Quat(obj_ori[1], obj_ori[2], obj_ori[3], obj_ori[0])
     return obj_pose
 
+def get_object_pose(obj_list, **tensor_args) : 
+    result = torch.tensor([], **tensor_args)
+    for obj in obj_list or []:
+        # get position and orientation
+        obj_pos = to_numpy(obj.pos)
+        obj_ori_mat = to_numpy(obj.ori)
+        obj_ori_quat = to_numpy(rotation_matrix_to_q(obj.ori))
+
+        for field in obj.fields : 
+            center_np = to_numpy(field.centers)
+            if center_np.shape[-1] == 2:
+                zeros = np.zeros((center_np.shape[0], 1), dtype=center_np.dtype)
+                center_np = np.concatenate([center_np, zeros], axis=-1)
+            #print(obj_ori_mat.shape, center_np.shape, obj_pos.shape)
+            tmp_pos = center_np @ obj_ori_mat.transpose(1,0) + obj_pos
+            tmp_quat = np.tile([obj_ori_quat[1], obj_ori_quat[2], obj_ori_quat[3], obj_ori_quat[0]],  # x y z w 
+                               reps = [tmp_pos.shape[0], 1])
+            tmp_pose = torch.tensor(np.concatenate([tmp_pos, tmp_quat], axis=-1), **tensor_args)
+            #print(tmp_pose)
+            result = torch.cat([result, tmp_pose])
+    
+    #print("get_object_pose : ",result.shape)
+    return result
+    
 
 def create_isaac_assets_from_primitive_shapes(sim, gym, obj_list):
     object_assets_l = []
     object_poses_l = []
+
+    dyn_assets_l = []
+    dyn_poses_l = []
 
     for obj in obj_list or []:
         # get position and orientation
         obj_pos = to_numpy(obj.pos)
         obj_ori_mat = to_numpy(obj.ori)
         obj_ori_quat = to_numpy(rotation_matrix_to_q(obj.ori))
+
+        is_static = True
+        if isinstance(obj, MovingObjectField) : 
+            print("MovingObjectField", obj.name)
+            is_static = False
 
         for obj_field in obj.fields:
             if isinstance(obj_field, MultiSphereField):
@@ -72,14 +117,26 @@ def create_isaac_assets_from_primitive_shapes(sim, gym, obj_list):
                     # create sphere asset
                     sphere_radius = radius_np
                     asset_options = gymapi.AssetOptions()
-                    asset_options.fix_base_link = True
+                    asset_options.fix_base_link = is_static # True
                     sphere_asset = gym.create_sphere(sim, sphere_radius, asset_options)
-                    object_assets_l.append(sphere_asset)
 
-                    # set position and orientation
-                    object_poses_l.append(
-                        set_object_position_and_orientation(obj_ori_mat @ center_np + obj_pos, obj_ori_quat)
-                    )
+                    if is_static : 
+                        object_assets_l.append(sphere_asset)
+                        # set position and orientation
+                        object_poses_l.append(
+                            set_object_position_and_orientation(obj_ori_mat @ center_np + obj_pos, obj_ori_quat)
+                        )
+                    else : 
+                        dyn_assets_l.append(sphere_asset)
+                        dyn_poses_l.append(
+                            set_object_position_and_orientation(obj_ori_mat @ center_np + obj_pos, obj_ori_quat)
+                        )
+                    # object_assets_l.append(sphere_asset)
+
+                    # # set position and orientation
+                    # object_poses_l.append(
+                    #     set_object_position_and_orientation(obj_ori_mat @ center_np + obj_pos, obj_ori_quat)
+                    # )
 
             elif isinstance(obj_field, MultiBoxField):
                 for center, size in zip(obj_field.centers, obj_field.sizes):
@@ -91,18 +148,25 @@ def create_isaac_assets_from_primitive_shapes(sim, gym, obj_list):
 
                     # create box asset
                     asset_options = gymapi.AssetOptions()
-                    asset_options.fix_base_link = True
+                    asset_options.fix_base_link = is_static # True
                     sphere_asset = gym.create_box(sim, size_np[0], size_np[1], size_np[2], asset_options)
-                    object_assets_l.append(sphere_asset)
+                    if is_static : 
+                        object_assets_l.append(sphere_asset)
+                        # set position and orientation
+                        object_poses_l.append(
+                            set_object_position_and_orientation(obj_ori_mat @ center_np + obj_pos, obj_ori_quat)
+                        )
+                    else : 
+                        dyn_assets_l.append(sphere_asset)
+                        dyn_poses_l.append(
+                            set_object_position_and_orientation(obj_ori_mat @ center_np + obj_pos, obj_ori_quat)
+                        )
 
-                    # set position and orientation
-                    object_poses_l.append(
-                        set_object_position_and_orientation(obj_ori_mat @ center_np + obj_pos, obj_ori_quat)
-                    )
+                    
             else:
                 raise NotImplementedError
 
-    return object_assets_l, object_poses_l
+    return object_assets_l, object_poses_l, dyn_assets_l, dyn_poses_l
 
 
 def make_gif_from_array(filename, array, fps=10):
@@ -272,7 +336,7 @@ class MotionPlanningIsaacGymEnv:
 
         self.controller_type = controller_type
         self.enable_dynamics = enable_dynamics
-
+        print("----- motion_planning_envs enable_dynamics : ",enable_dynamics)
         # create num_envs environments, add 1 for the goal configuration
         self.num_envs = num_envs + 1 if draw_goal_configuration else num_envs
         self.env_idxs = list(range(self.num_envs - 1 if draw_goal_configuration else self.num_envs - 1))
@@ -338,13 +402,15 @@ class MotionPlanningIsaacGymEnv:
 
         ###############################################################################################################
         # Environment assets
-        object_fixed_assets_l, object_fixed_poses_l = create_isaac_assets_from_primitive_shapes(
+        # assume no dynamic object in fixed objects
+        object_fixed_assets_l, object_fixed_poses_l, _, _ = create_isaac_assets_from_primitive_shapes(
             self.sim, self.gym, self.env_tr.obj_fixed_list
         )
-        object_extra_assets_l, object_extra_poses_l = create_isaac_assets_from_primitive_shapes(
+        object_extra_assets_l, object_extra_poses_l, dyn_obj_extra_assets_l, dyn_obj_extra_poses_l = create_isaac_assets_from_primitive_shapes(
             self.sim, self.gym, self.env_tr.obj_extra_list
         )
-
+        print("create_isaac_assets_from_primitive_shapes",len(object_extra_assets_l), len(object_extra_poses_l), len(dyn_obj_extra_assets_l), len(dyn_obj_extra_poses_l))
+        self.is_dynamic = len(dyn_obj_extra_poses_l) > 0 
         ###############################################################################################################
         # Robot asset
 
@@ -418,6 +484,8 @@ class MotionPlanningIsaacGymEnv:
         self.obj_idxs = []
         self.hand_idxs = []
 
+        self.dyn_obj_idxs = []
+
         color_obj_fixed = GYM_COLORS["grey"]
         color_obj_extra = GYM_COLORS["red"]
 
@@ -445,11 +513,22 @@ class MotionPlanningIsaacGymEnv:
         # Maps the global rigid body index to the environments index
         # Useful to know which trajectories are in collision
         self.map_rigid_body_idxs_to_env_idx = {}
-
+        print("all_robots_in_one_env",self.all_robots_in_one_env)
+        
         # Create environments
         if self.all_robots_in_one_env:
             env = self.gym.create_env(self.sim, env_lower, env_upper, num_per_row)
             self.envs.append(env)
+
+        offset = 0
+
+        if self.is_dynamic :
+            #actor_filter = {'robot' : 1, 'fix' : 2, 'dyn' : 2}
+            obj_filter = 2 # obj does not collide with each other
+
+        else : # static
+            #actor_filter = {'robot' : 1, 'fix' : 0, 'dyn': 0}       
+            obj_filter = 0 
 
         for i in range(self.num_envs):
             # Create environment
@@ -459,32 +538,56 @@ class MotionPlanningIsaacGymEnv:
 
             # Add objects fixed
             for obj_asset, obj_pose in zip(object_fixed_assets_l, object_fixed_poses_l):
-                object_handle = self.gym.create_actor(env, obj_asset, obj_pose, "obj_fixed", i, 0)
+                object_handle = self.gym.create_actor(env, obj_asset, obj_pose, "obj_fixed", i, obj_filter)
                 self.gym.set_rigid_body_color(env, object_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color_obj_fixed)
                 # get global index of object in rigid body state tensor
                 obj_idx = self.gym.get_actor_rigid_body_index(env, object_handle, 0, gymapi.DOMAIN_SIM)
+                # print("1",obj_idx)
                 self.obj_idxs.append(obj_idx)
                 self.map_rigid_body_idxs_to_env_idx[obj_idx] = i
 
             # Add objects extra
             for obj_asset, obj_pose in zip(object_extra_assets_l, object_extra_poses_l):
-                object_handle = self.gym.create_actor(env, obj_asset, obj_pose, "obj_extra", i, 0)
+                object_handle = self.gym.create_actor(env, obj_asset, obj_pose, "obj_extra", i, obj_filter)
                 self.gym.set_rigid_body_color(env, object_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color_obj_extra)
                 # get global index of object in rigid body state tensor
                 obj_idx = self.gym.get_actor_rigid_body_index(env, object_handle, 0, gymapi.DOMAIN_SIM)
                 self.obj_idxs.append(obj_idx)
+                #print("2",obj_idx)
                 self.map_rigid_body_idxs_to_env_idx[obj_idx] = i
+
+            # Add dyn objects extra
+            self.initial_dyn_obj_states = torch.tensor([], **self.tensor_args)
+            for obj_asset, obj_pose in zip(dyn_obj_extra_assets_l, dyn_obj_extra_poses_l):
+                object_handle = self.gym.create_actor(env, obj_asset, obj_pose, "dyn_obj_extra", i, obj_filter)  
+                obj_tensor = transform_to_tensor(obj_pose, **self.tensor_args) # tensor ndim=1
+                self.initial_dyn_obj_states = torch.cat([self.initial_dyn_obj_states, obj_tensor.unsqueeze(0)]) 
+                self.gym.set_rigid_body_color(env, object_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color_obj_extra)
+                # get global index of object in rigid body state tensor
+                obj_idx = self.gym.get_actor_rigid_body_index(env, object_handle, 0, gymapi.DOMAIN_SIM)
+                #print("3",obj_idx)
+                self.obj_idxs.append(obj_idx)
+                self.map_rigid_body_idxs_to_env_idx[obj_idx] = i
+                self.dyn_obj_idxs.append(obj_idx - offset)
 
             # Add the robot
             # Set to 0 to enable self-collision.
             # By default, we do not consider self-collision, because the collision meshes are too conservative.
-            robot_handle = self.gym.create_actor(env, robot_asset, robot_pose, f"robot_{i}", i, 1)
+            if self.is_dynamic and self.draw_goal_configuration and i == self.num_envs - 1 : 
+                # last robot treated as obstacle
+                robot_handle = self.gym.create_actor(env, robot_asset, robot_pose, f"robot_{i}", i, obj_filter) 
+            else :     
+                robot_handle = self.gym.create_actor(env, robot_asset, robot_pose, f"robot_{i}", i, 1)
+
             self.robot_handles.append(robot_handle)
             self.robot_idxs.append(self.gym.get_actor_index(env, robot_handle, gymapi.DOMAIN_SIM))
             rb_names = self.gym.get_actor_rigid_body_names(env, robot_handle)
             for j in range(len(rb_names)):
                 rb_idx = self.gym.get_actor_rigid_body_index(env, robot_handle, j, gymapi.DOMAIN_SIM)
+                #print("4",rb_idx)
                 self.map_rigid_body_idxs_to_env_idx[rb_idx] = i
+                
+            offset += len(rb_names) - 1 # remove idx from robot_handle
 
             # color robot
             n_rigid_bodies = self.gym.get_actor_rigid_body_count(env, robot_handle)
@@ -563,11 +666,33 @@ class MotionPlanningIsaacGymEnv:
         self.step_idx = 0
 
     def reset(self, q_pos_starts=None, q_pos_goal=None):
+        # print(self.step_idx)
         # Reset step counter
         self.step_idx = 0
 
         # reset camera recorder
         self.camera_global_recorder.reset()
+
+
+        # reset dynamic obstacle
+        if len(self.dyn_obj_idxs) > 0 : 
+            obj_idxs_int32 = torch.tensor(self.dyn_obj_idxs).to(dtype=torch.int32)
+            root_states_aux = self.initial_root_states.clone() #should be tensor
+            # print(len(self.dyn_obj_idxs), self.initial_dyn_obj_states.shape) 
+            # repeat for self.num_envs
+            #num_envs = self.num_envs -1 if self.draw_goal_configuration else self.num_envs
+            num_envs = self.num_envs
+            #print("dyn_obj_idx : ",max(self.dyn_obj_idxs), 
+            #      all(self.dyn_obj_idxs[i] <= self.dyn_obj_idxs[i+1] for i in range(len(self.dyn_obj_idxs) - 1)))
+            
+            #print("current actors: ",self.gym.get_sim_actor_count(self.sim))
+            root_states_aux[self.dyn_obj_idxs, 0:7] = self.initial_dyn_obj_states.repeat(num_envs, 1)
+            self.gym.set_actor_root_state_tensor_indexed(
+                self.sim, 
+                gymtorch.unwrap_tensor(root_states_aux),
+                gymtorch.unwrap_tensor(obj_idxs_int32),
+                len(obj_idxs_int32)
+            )
 
         # The number of robots in q_pos_starts might not match the number of environments
         # We set the initial states of the remaining robots far away for visualization purposes
@@ -575,6 +700,9 @@ class MotionPlanningIsaacGymEnv:
         if self.draw_goal_configuration:
             robot_idxs_keep.append(self.robot_idxs[self.env_goal_configuration_idx])
         robot_idxs_remove = list(set(self.robot_idxs) - set(robot_idxs_keep))
+        # print(self.robot_idxs)
+        # print(robot_idxs_keep)
+        # print(robot_idxs_remove)
 
         root_states_aux = self.initial_root_states.clone()
         root_states_aux[robot_idxs_remove, 0] = 50.0
@@ -657,7 +785,7 @@ class MotionPlanningIsaacGymEnv:
         self.gym.set_dof_state_tensor(self.sim, gymtorch.unwrap_tensor(q_states_des))
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(dof_pos_tensor))
 
-    def step(self, actions, return_viewer_img=False):
+    def step(self, actions, return_viewer_img=False, obj_time=None):
         ###############################################################################################################
         # Deploy control based on type
         action_dof_target = torch.zeros_like(self.robot_dof_pos).squeeze(-1)
@@ -679,9 +807,30 @@ class MotionPlanningIsaacGymEnv:
             # Deploy actions to execute with a controller
             if self.controller_type == "position":
                 self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(action_dof_target))
+
+            # dynamic obstacle not implemented
         else:
+            # update dynamic obstacle
+            if len(self.dyn_obj_idxs) > 0 and obj_time is not None :
+                obj_idxs_int32 = torch.tensor(self.dyn_obj_idxs).to(dtype=torch.int32)
+                root_states_aux = self.initial_root_states.clone() #should be tensor
+                # update with respect to the environment
+                self.env_tr._update_moving_objects_at_time(obj_time)
+                object_pose = get_object_pose(self.env_tr.obj_extra_list, **self.tensor_args)
+                #assume object indexs are not mixed
+                # num_envs = self.num_envs -1 if self.draw_goal_configuration else self.num_envs
+                num_envs = self.num_envs
+                root_states_aux[self.dyn_obj_idxs, 0:7] = object_pose.repeat(num_envs, 1)
+                self.gym.set_actor_root_state_tensor_indexed(
+                    self.sim, 
+                    gymtorch.unwrap_tensor(root_states_aux),
+                    gymtorch.unwrap_tensor(obj_idxs_int32),
+                    len(obj_idxs_int32)
+                )
+
             # Sets the simulation to this state and target
             self.set_dof_positions(action_dof_target)
+            
 
         ###############################################################################################################
         # Step the simulation physics forward
@@ -876,10 +1025,12 @@ class MotionPlanningControllerIsaacGym:
 
         # Execute the planned trajectory
         envs_with_robot_in_contact_l = []
+        horizon = trajectories_copy.shape[0] # horizon
         for i, actions in enumerate(trajectories_copy):
             if self.mp_isaac_env.check_viewer_has_closed():
                 break
-            joint_states, envs_with_robot_in_contact = self.mp_isaac_env.step(actions)
+            current_time = i / horizon * kwargs["video_duration"]
+            joint_states, envs_with_robot_in_contact = self.mp_isaac_env.step(actions, obj_time = current_time)
             envs_with_robot_in_contact_l.append(envs_with_robot_in_contact)
             # stop the trajectory if the robots was in contact with the environments
             if stop_robot_if_in_contact and len(envs_with_robot_in_contact) > 0:
@@ -941,9 +1092,9 @@ if __name__ == "__main__":
     )
 
     # -------------------------------- Physics --------------------------------
-    draw_collision_spheres = False
+    draw_collision_spheres = True # False
     robot_asset_file = robot.robot_urdf_collision_spheres_file if draw_collision_spheres else robot.robot_urdf_file
-    num_envs = 5
+    num_envs = 1 # 5
     motion_planning_isaac_env = MotionPlanningIsaacGymEnv(
         env,
         robot,

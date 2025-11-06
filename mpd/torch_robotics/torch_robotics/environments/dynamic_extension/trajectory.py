@@ -2,9 +2,9 @@ import torch
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import List, Callable, Optional
-from mpd.torch_robotics.torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
-#from mpd.torch_robotics.torch_robotics.environments.dynamic_extension.moving_primitives import MovingObjectField
-from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
+from torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
+#from torch_robotics.environments.dynamic_extension.moving_primitives import MovingObjectField
+from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
 
 
 '''
@@ -169,6 +169,33 @@ class LinearTrajectory(TrajectoryInterpolator):
 
         assert self.keyframe_times.shape[0] == self.keyframe_positions.shape[0]
         assert self.keyframe_times.shape[0] == self.keyframe_orientations.shape[0]
+
+    def get_velocity(self):
+        """
+        Get average velocity for linear trajectory (simple case: 2 keyframes).
+
+        Returns:
+            velocity: Velocity vector, shape (3,)
+        """
+        if len(self.keyframe_times) == 2:
+            # Simple linear trajectory: v = (pos1 - pos0) / (t1 - t0)
+            dt = self.keyframe_times[1] - self.keyframe_times[0]
+            dpos = self.keyframe_positions[1] - self.keyframe_positions[0]
+            return dpos / (dt + 1e-8)
+        else:
+            # Multi-segment: return average velocity
+            dt = self.keyframe_times[-1] - self.keyframe_times[0]
+            dpos = self.keyframe_positions[-1] - self.keyframe_positions[0]
+            return dpos / (dt + 1e-8)
+
+    def get_start_position(self):
+        """
+        Get starting position of trajectory.
+
+        Returns:
+            pos: Starting position, shape (3,)
+        """
+        return self.keyframe_positions[0]
 
     def __call__(self, t):
         """

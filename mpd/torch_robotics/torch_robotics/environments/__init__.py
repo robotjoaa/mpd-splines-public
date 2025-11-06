@@ -14,3 +14,8 @@ from .env_square_2d import EnvSquare2D
 from .env_table_shelf import EnvTableShelf, EnvTableShelfExtraObjectsV00
 from .env_warehouse import EnvWarehouse, EnvWarehouseExtraObjectsV00
 from .env_empty_2d import EnvEmpty2D, EnvEmpty2DExtraSphere, EnvEmpty2DExtraNonConvex, EnvEmpty2DExtraSquare
+
+### dynamic MPD envs ### 
+from .dynamic_extension.env_dyn_simple_extra_2d import EnvDynSimple2DExtraObjects
+from .dynamic_extension.env_dyn_dense_extra_2d import EnvDynDense2DExtraObjects
+### pb_diff_envs ###

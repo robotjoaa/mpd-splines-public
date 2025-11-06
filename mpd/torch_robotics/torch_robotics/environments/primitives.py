@@ -366,6 +366,38 @@ class MultiRoundedBoxField(MultiBoxField):
         sdf_vals_min, sdf_idxs_min = torch.min(sdfs, dim=-1)
         return sdf_vals_min
 
+    # def sdf_computation(self, x):
+    #     """
+    #     Vectorized rounded-box SDF computation.
+    #     Args:
+    #         x: (..., 3) query points
+    #     Returns:
+    #         sdf_vals_min: (...,) minimum signed distance among all boxes
+    #     """
+
+    #     # x shape: [N, 3]
+    #     # centers shape: [M, 3]
+    #     # half_sizes shape: [M, 3]
+    #     # radius shape: [M]
+
+    #     # Compute q = |x - center| - half_size
+    #     q = torch.abs(x.unsqueeze(-2) - self.centers.unsqueeze(0)) - self.half_sizes.unsqueeze(0)
+    #     # q shape: [N, M, 3]
+
+    #     # Outside distance (Euclidean norm of positive components)
+    #     outside = torch.linalg.norm(torch.relu(q), dim=-1)  # [N, M]
+
+    #     # Inside distance (max of components, clamped to ≤ 0)
+    #     inside = torch.minimum(torch.amax(q, dim=-1), torch.zeros_like(q[..., 0]))  # [N, M]
+
+    #     # Combine and subtract radius
+    #     sdfs = outside + inside - self.radius.unsqueeze(0)  # [N, M]
+
+    #     # Take minimum across all boxes
+    #     sdf_vals_min, sdf_idxs_min = torch.min(sdfs, dim=-1)
+    #     return sdf_vals_min
+
+
     def compute_signed_distance_impl(self, x, get_gradient=False):
         # Implementation of rounded box
         # https://raphlinus.github.io/graphics/2020/04/21/blurred-rounded-rects.html

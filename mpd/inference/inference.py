@@ -24,7 +24,7 @@ from torch_robotics.torch_utils.torch_utils import (
     DEFAULT_TENSOR_ARGS,
 )
 from torch_robotics.trajectory.metrics import compute_smoothness, compute_ee_pose_errors, compute_path_length
-
+from torch_robotics.tasks import DynPlanningTask
 
 class EvaluationSamplesGenerator:
     """
@@ -271,16 +271,30 @@ def render_results(
 
     if render_planning_env_robot_trajectories:
         # visualize in the planning environment
-        planning_task.animate_robot_trajectories(
-            q_pos_trajs=results_single_plan.q_trajs_pos_iters[-1],
-            q_pos_start=q_pos_start,
-            q_pos_goal=q_pos_goal,
-            plot_x_trajs=True,
-            video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-{idx:03d}.mp4"),
-            n_frames=max((2, results_single_plan.q_trajs_pos_iters[-1].shape[1] // 10)),
-            anim_time=args_inference.trajectory_duration,
-            filter_joint_limits_vel_acc=True,
-        )
+        
+        if isinstance(planning_task, DynPlanningTask) :
+            planning_task.animate_robot_trajectories(
+                q_pos_trajs=results_single_plan.q_trajs_pos_iters[-1],
+                q_pos_start=q_pos_start,
+                q_pos_goal=q_pos_goal,
+                plot_x_trajs=True,
+                video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-{idx:03d}.mp4"),
+                #n_frames=max((2, results_single_plan.q_trajs_pos_iters[-1].shape[1] // 10)),
+                n_frames=args_inference.num_T_pts, #full frames
+                anim_time=args_inference.trajectory_duration,
+                filter_joint_limits_vel_acc=True,
+            ) 
+        else : 
+            planning_task.animate_robot_trajectories(
+                q_pos_trajs=results_single_plan.q_trajs_pos_iters[-1],
+                q_pos_start=q_pos_start,
+                q_pos_goal=q_pos_goal,
+                plot_x_trajs=True,
+                video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-{idx:03d}.mp4"),
+                n_frames=max((2, results_single_plan.q_trajs_pos_iters[-1].shape[1] // 10)),
+                anim_time=args_inference.trajectory_duration,
+                filter_joint_limits_vel_acc=True,
+            )
 
     if debug:
         plt.show()

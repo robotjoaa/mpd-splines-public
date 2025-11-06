@@ -463,6 +463,13 @@ class GaussianDiffusionModel(nn.Module, ABC):
 
         assert noise.shape == x_recon.shape
 
+        # Create mask for learnable entries
+        # mask = torch.ones_like(x_recon, dtype=torch.bool)
+        # for k in hard_conds.keys():
+        #     mask[:, k, :] = False
+
+        # if self.predict_epsilon:
+        #     loss, info = self.loss_fn(x_recon[mask], noise[mask])
         if self.predict_epsilon:
             loss, info = self.loss_fn(x_recon, noise)
         else:

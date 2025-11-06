@@ -3,7 +3,6 @@ import pickle
 
 import torch
 
-
 class CPU_Unpickler(pickle.Unpickler):
     # https://stackoverflow.com/a/68992197
     # Unpickler that can load a GPU pickled object on the CPU

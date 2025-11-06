@@ -275,6 +275,8 @@ class RobotBase(ABC):
         print("-----------------------------------")
         print(f"Torchkin robot: {self.robot_torchkin.name}")
         print(f"Num links: {len(self.robot_torchkin.get_links())}")
+        # for l in self.robot_torchkin.get_links() :
+        #     print(l._name, l._id)
         print(f"DOF: {self.robot_torchkin.dof}\n")
         print("-----------------------------------")
 

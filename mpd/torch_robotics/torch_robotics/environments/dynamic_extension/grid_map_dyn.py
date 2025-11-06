@@ -502,7 +502,7 @@ if __name__ == "__main__":
     limits = torch.tensor([[-1.0, -1.0], [1.0, 1.0]], **tensor_args)
 
     print("Creating GridMapSDFTimeVarying...")
-    grid_sdf = GridMapSDFTimeVarying(
+    grid_sdf = GridMapDynSDF(
         limits=limits,
         cell_size=0.02,
         moving_obj_list_fn=moving_objects_fn,

@@ -10,11 +10,11 @@ import torch
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jacobian
 
-from mpd.torch_robotics.torch_robotics.environments.env_base import EnvBase
-from mpd.torch_robotics.torch_robotics.environments.dynamic_extension.moving_primitives import MovingObjectField
-from mpd.torch_robotics.torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
-from mpd.torch_robotics.torch_robotics.torch_utils.torch_utils import to_numpy, DEFAULT_TENSOR_ARGS
-from mpd.torch_robotics.torch_robotics.torch_utils.torch_timer import TimerCUDA
+from torch_robotics.environments.env_base import EnvBase
+from .moving_primitives import MovingObjectField
+from torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
+from torch_robotics.torch_utils.torch_utils import to_numpy, DEFAULT_TENSOR_ARGS
+from torch_robotics.torch_utils.torch_timer import TimerCUDA
 
 
 class EnvDynBase:
@@ -32,6 +32,7 @@ class EnvDynBase:
         k_smooth=20.0,
         smoothing_method="Quadratic",
         time_range=(0.0, 1.0),
+        no_smoothing=False,
         **kwargs
     ):
         """
@@ -47,7 +48,7 @@ class EnvDynBase:
         # Smooth SDF parameters
         self.k_smooth = k_smooth
         self.smoothing_method = smoothing_method
-
+        self.no_smoothing = no_smoothing
         # Time-varying obstacle support
         self.time_range = time_range
 
@@ -216,10 +217,11 @@ class EnvDynBase:
             self._update_moving_objects_at_time(time)
 
         # Use instance default if not specified
-        if smoothing_method is None:
+        if smoothing_method is None :
             smoothing_method = self.smoothing_method
+            #use_smooth_union = False
 
-        if not use_smooth_union:
+        if not use_smooth_union or self.no_smoothing:
             # Delegate to wrapped EnvBase (hard minimum)
             return self.env.compute_sdf(x, reshape_shape=reshape_shape)
 
@@ -412,41 +414,41 @@ class EnvDynBase:
 
         return fig, axes
 
-    def create_render_fn_with_time(self, trajectory_time_steps):
-        """
-        Create a time-aware rendering function for use with animate_robot_trajectories.
+    # def create_render_fn_with_time(self, trajectory_time_steps):
+    #     """
+    #     Create a time-aware rendering function for use with animate_robot_trajectories.
 
-        This function returns a wrapper that can replace self.env.render in animations
-        to support time-varying obstacle visualization.
+    #     This function returns a wrapper that can replace self.env.render in animations
+    #     to support time-varying obstacle visualization.
 
-        Args:
-            trajectory_time_steps: Tensor or array of time values for each trajectory step
+    #     Args:
+    #         trajectory_time_steps: Tensor or array of time values for each trajectory step
 
-        Returns:
-            A function with signature (ax, frame_idx) that renders at the appropriate time
+    #     Returns:
+    #         A function with signature (ax, frame_idx) that renders at the appropriate time
 
-        Example:
-            # In PlanningTask.animate_robot_trajectories, modify the animate_fn:
-            time_steps = planning_task.parametric_trajectory.get_timesteps()
-            render_fn = env.create_render_fn_with_time(time_steps)
+    #     Example:
+    #         # In PlanningTask.animate_robot_trajectories, modify the animate_fn:
+    #         time_steps = planning_task.parametric_trajectory.get_timesteps()
+    #         render_fn = env.create_render_fn_with_time(time_steps)
 
-            def animate_fn(i, ax):
-                ax.clear()
-                render_fn(ax, idxs[i])  # Render at time corresponding to frame i
-                # ... rest of animation code
-        """
-        def render_at_frame(ax, frame_idx):
-            """Render environment at specific frame index."""
-            if frame_idx < len(trajectory_time_steps):
-                time = trajectory_time_steps[frame_idx]
-                if isinstance(time, torch.Tensor):
-                    time = time.item()
-                self.render(ax, time=time)
-            else:
-                # Fallback to last time or no time
-                self.render(ax, time=self.time_range[1] if self.moving_obj_list_fn else None)
+    #         def animate_fn(i, ax):
+    #             ax.clear()
+    #             render_fn(ax, idxs[i])  # Render at time corresponding to frame i
+    #             # ... rest of animation code
+    #     """
+    #     def render_at_frame(ax, frame_idx):
+    #         """Render environment at specific frame index."""
+    #         if frame_idx < len(trajectory_time_steps):
+    #             time = trajectory_time_steps[frame_idx]
+    #             if isinstance(time, torch.Tensor):
+    #                 time = time.item()
+    #             self.render(ax, time=time)
+    #         else:
+    #             # Fallback to last time or no time
+    #             self.render(ax, time=self.time_range[1] if self.moving_obj_list_fn else None)
 
-        return render_at_frame
+    #     return render_at_frame
 
 
     def animate_with_time(

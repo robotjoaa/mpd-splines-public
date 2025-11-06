@@ -87,6 +87,7 @@ class EmbodimentDistanceFieldBase(DistanceField):
         self.interpolate_link_pos = interpolate_link_pos
 
     def compute_embodiment_cost(self, q_pos, link_pos, field_type=None, **kwargs):  # position tensor
+        #print("compute_embodiment_cost")
         if field_type is None:
             field_type = self.field_type
         if field_type == "rbf":
@@ -111,6 +112,7 @@ class EmbodimentDistanceFieldBase(DistanceField):
             raise NotImplementedError("field_type {} not implemented".format(field_type))
 
     def compute_costs_impl(self, q_pos, link_pos, **kwargs):
+        # print("compute_costs_impl")
         # position link_pos tensor # batch x num_links x 3
         embodiment_cost = self.compute_embodiment_cost(q_pos, link_pos, **kwargs)
         return embodiment_cost
@@ -201,6 +203,7 @@ class CollisionObjectBase(EmbodimentDistanceFieldBase):
         return rbf_distance
 
     def compute_embodiment_signed_distances(self, q_pos, link_pos, **kwargs):
+        #print("compute_embodiment_signed_distances")
         return self.object_signed_distances(link_pos, **kwargs)
 
     def compute_embodiment_collision(self, q, link_pos, **kwargs):
@@ -208,6 +211,7 @@ class CollisionObjectBase(EmbodimentDistanceFieldBase):
         # The cutoff margin can be overridden by the margin argument in kwargs.
         # E.g., to check for collisions after planning, we can use a margin of 0 to not discard points that are not
         # in collision but might be inside the cutoff margin used to compute a cost.
+        #print("compute_embodiment_collision")
         cutoff_margin = kwargs.get("margin", self.cutoff_margin)
         # collision_margins are the spheres radii around the links
         margin = self.collision_margins + cutoff_margin
@@ -229,16 +233,20 @@ class CollisionObjectDistanceField(CollisionObjectBase):
         self.df_obj_list_fn = df_obj_list_fn
 
     def object_signed_distances(self, link_pos, get_gradient=False, **kwargs):
+        #print("link_pos shape :",link_pos.shape)
         if self.df_obj_list_fn is None:
             return torch.inf
         df_obj_list = self.df_obj_list_fn()
         link_dim = link_pos.shape[:-1]
-        link_pos = link_pos.reshape(-1, link_pos.shape[-1])  # flatten batch_dim and links
+        link_pos_flat = link_pos.reshape(-1, link_pos.shape[-1])  # flatten batch_dim and links
+
         dfs = []
         if get_gradient:
             dfs_gradient = []
             for df in df_obj_list:
-                sdf_vals, sdf_gradient = df.compute_signed_distance(link_pos, get_gradient=get_gradient)
+                sdf_vals, sdf_gradient = df.compute_signed_distance(
+                    link_pos_flat, get_gradient=get_gradient
+                )
                 dfs.append(sdf_vals.view(link_dim))  # df() returns batch_dim x links
                 dfs_gradient.append(sdf_gradient.view(link_dim + (sdf_gradient.shape[-1],)))
 
@@ -247,7 +255,9 @@ class CollisionObjectDistanceField(CollisionObjectBase):
             return dfs_th, dfs_gradient
         else:
             for df in df_obj_list:
-                sdf_vals = df.compute_signed_distance(link_pos, get_gradient=get_gradient)
+                sdf_vals = df.compute_signed_distance(
+                    link_pos_flat, get_gradient=get_gradient
+                )
                 dfs.append(sdf_vals.view(link_dim))  # df() returns batch_dim x links
 
             dfs_th = torch.stack(dfs, dim=-2)  # batch_dim x num_sdfs x links
@@ -263,6 +273,7 @@ class CollisionObjectDistanceField(CollisionObjectBase):
     def compute_embodiment_taskspace_sdf_and_gradient(self, link_pos, **kwargs):
         margin = self.collision_margins + self.cutoff_margin
         # returns all distances from each link to the environment
+        #print("compute_embodiment_taskspace_sdf_and_gradient")
         sdf_vals, sdf_gradient = self.object_signed_distances(link_pos, get_gradient=True, **kwargs)
         margin_minus_sdf = -(sdf_vals - margin)
         if self.clamp_sdf:
