@@ -101,13 +101,16 @@ class DynPlanningTask(PlanningTask):
         # Self-collision field (static)
         self.df_collision_self = self.robot.df_collision_self
 
+        # increased cutoff_margin for dynamic tasks
+        scale = 4 # 0.03 -> 0.06
+        # print("CollisionObjectDistanceFieldTimeVarying, cutoff_margin", obstacle_cutoff_margin*scale)
         # Time-varying collision field for objects
         self.df_collision_objects = CollisionObjectDistanceFieldTimeVarying(
             self.robot,
             df_time_varying_obj_fn=self.env.get_df_obj_list,
             parametric_trajectory=self.parametric_trajectory,
             link_margins_for_object_collision_checking_tensor=self.robot.link_collision_spheres_radii,
-            cutoff_margin=obstacle_cutoff_margin,
+            cutoff_margin=obstacle_cutoff_margin * scale,
             tensor_args=self.tensor_args,
         )
 
@@ -119,7 +122,7 @@ class DynPlanningTask(PlanningTask):
                 df_time_varying_obj_fn=partial(self.env.get_df_obj_list, return_extra_objects_only=True),
                 parametric_trajectory=self.parametric_trajectory,
                 link_margins_for_object_collision_checking_tensor=self.robot.link_collision_spheres_radii,
-                cutoff_margin=obstacle_cutoff_margin,
+                cutoff_margin=obstacle_cutoff_margin * scale,
                 tensor_args=self.tensor_args,
             )
             self._collision_fields_extra_objects = [self.df_collision_extra_objects]

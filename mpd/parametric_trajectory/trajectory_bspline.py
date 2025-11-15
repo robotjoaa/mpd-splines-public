@@ -269,6 +269,9 @@ class BSpline:
         ddNs[-1, -1] = 2 * self.d * (self.m - 2 * self.d) ** 2 * (self.d - 1) / 2
         ddNs[-1, -2] = -3 * self.d * (self.m - 2 * self.d) ** 2 * (self.d - 1) / 2
         ddNs[-1, -3] = self.d * (self.m - 2 * self.d) ** 2 * (self.d - 1) / 2
+        # ddNs[-1, -1] = self.d * (self.m - 2 * self.d) ** 2 * (self.d - 1)
+        # ddNs[-1, -2] = -2 * self.d * (self.m - 2 * self.d) ** 2 * (self.d - 1)
+        # ddNs[-1, -3] = self.d * (self.m - 2 * self.d) ** 2 * (self.d - 1)
         dddNs = [np.stack([dddN(self.d, t, i) for i in range(self.m - self.d)]) for t in T]
         dddNs = np.stack(dddNs, axis=0)
         dddNs[-1, -1] = 6 * self.d * (self.m - 2 * self.d) ** 3 * (self.d - 2)
@@ -285,93 +288,120 @@ if __name__ == "__main__":
     control_points_y = control_points_x + 0.2 * np.sin(control_points_x * 10.0)
     control_points = np.stack((control_points_x, control_points_y), axis=1)
 
-    num_T_pts = 128
-    trajectory_duration = 5.0
+    num_T_pts = 40 
+    trajectory_duration = 5.0 / 3
 
-    fig_cps, axs_cps = create_fig_and_axes(2, figsize=(8, 6))
-    fig_qs, axs_qs = plt.subplots(control_points.shape[-1], 3, figsize=(12, 8))
-    fig_phase, axs_phase = create_fig_and_axes(2, figsize=(8, 6))
-    fig_rs, axs_rs = create_fig_and_axes(2, figsize=(8, 6))
-    for l, (phase_class, phase_time_args, line_color, line_style) in enumerate(
-        zip(["PhaseTimeLinear", "PhaseTimeSigmoid"], [{}, {"k": 8}], ["gray", "orange"], ["solid", "solid"])
-    ):
-        print(f"Phase class: {phase_class}")
+    # fig_cps, axs_cps = create_fig_and_axes(2, figsize=(8, 6))
+    # fig_qs, axs_qs = plt.subplots(control_points.shape[-1], 3, figsize=(12, 8))
+    # fig_phase, axs_phase = create_fig_and_axes(2, figsize=(8, 6))
+    # fig_rs, axs_rs = create_fig_and_axes(2, figsize=(8, 6))
+    # for l, (phase_class, phase_time_args, line_color, line_style) in enumerate(
+    #     zip(["PhaseTimeLinear", "PhaseTimeSigmoid"], [{}, {"k": 8}], ["gray", "orange"], ["solid", "solid"])
+    # ):
+    #     print(f"Phase class: {phase_class}")
 
-        parametric_traj = ParametricTrajectoryBspline(
-            n_control_points=n_control_points,
-            degree=5,
-            num_T_pts=num_T_pts,
-            zero_vel_at_start_and_goal=True,
-            zero_acc_at_start_and_goal=True,
-            trajectory_duration=trajectory_duration,
-            phase_time_class=phase_class,
-            phase_time_args=phase_time_args,
-            tensor_args=dict(device="cpu", dtype=torch.float32),
-        )
+    #     parametric_traj = ParametricTrajectoryBspline(
+    #         n_control_points=n_control_points,
+    #         degree=5,
+    #         num_T_pts=num_T_pts,
+    #         zero_vel_at_start_and_goal=True,
+    #         zero_acc_at_start_and_goal=True,
+    #         trajectory_duration=trajectory_duration,
+    #         phase_time_class=phase_class,
+    #         phase_time_args=phase_time_args,
+    #         tensor_args=dict(device="cpu", dtype=torch.float32),
+    #     )
 
-        control_points_th = torch.from_numpy(control_points)[None, ...]
-        q_start = control_points_th[0, 0, ...]
-        q_goal = control_points_th[0, -1, ...]
+    #     control_points_th = torch.from_numpy(control_points)[None, ...]
+    #     q_start = control_points_th[0, 0, ...]
+    #     q_goal = control_points_th[0, -1, ...]
 
-        q_traj_d = parametric_traj.get_q_trajectory(
-            control_points_th, q_start, q_goal, get_type=("pos", "vel", "acc"), get_time_representation=True
-        )
+    #     q_traj_d = parametric_traj.get_q_trajectory(
+    #         control_points_th, q_start, q_goal, get_type=("pos", "vel", "acc"), get_time_representation=True
+    #     )
 
-        q = q_traj_d["pos"][0].detach()
-        dq = q_traj_d["vel"][0].detach()
-        ddq = q_traj_d["acc"][0].detach()
+    #     q = q_traj_d["pos"][0].detach()
+    #     dq = q_traj_d["vel"][0].detach()
+    #     ddq = q_traj_d["acc"][0].detach()
 
-        # plot control points and q_pos
-        axs_cps.scatter(control_points_x, control_points_y, c="blue", marker="o", s=10**2, zorder=100)
-        axs_cps.plot(q[:, 0], q[:, 1], color=line_color, linestyle=line_style, linewidth=8)
+    #     # plot control points and q_pos
+    #     axs_cps.scatter(control_points_x, control_points_y, c="blue", marker="o", s=10**2, zorder=100)
+    #     axs_cps.plot(q[:, 0], q[:, 1], color=line_color, linestyle=line_style, linewidth=8)
 
-        # plot q, dq, ddq in time
-        t = parametric_traj.phase_time.t
+    #     # plot q, dq, ddq in time
+    #     t = parametric_traj.phase_time.t
 
-        # integrate q and dq for checking correctness
-        print(f"q(T) (from B-spline): {q[-1]}")
-        q_T_from_dq = (
-            q[0] + torch.cumsum(dq * torch.diff(torch.cat([torch.zeros([1]), t]), dim=-1)[..., None], dim=0)[-1]
-        )
-        print(f"q(T) (from dq integration): {q_T_from_dq}")
+    #     # integrate q and dq for checking correctness
+    #     print(f"q(T) (from B-spline): {q[-1]}")
+    #     q_T_from_dq = (
+    #         q[0] + torch.cumsum(dq * torch.diff(torch.cat([torch.zeros([1]), t]), dim=-1)[..., None], dim=0)[-1]
+    #     )
+    #     print(f"q(T) (from dq integration): {q_T_from_dq}")
 
-        print(f"dq(T) (from B-spline): {dq[-1]}")
-        dq_T_from_ddq = (
-            dq[0] + torch.cumsum(ddq * torch.diff(torch.cat([torch.zeros([1]), t]), dim=-1)[..., None], dim=0)[-1]
-        )
-        print(f"dq(T) (from ddq integration): {dq_T_from_ddq}\n")
+    #     print(f"dq(T) (from B-spline): {dq[-1]}")
+    #     dq_T_from_ddq = (
+    #         dq[0] + torch.cumsum(ddq * torch.diff(torch.cat([torch.zeros([1]), t]), dim=-1)[..., None], dim=0)[-1]
+    #     )
+    #     print(f"dq(T) (from ddq integration): {dq_T_from_ddq}\n")
 
-        for i, x in enumerate([q, dq, ddq]):
-            for j in range(x.shape[1]):
-                axs_qs[j, i].plot(t.detach().cpu(), x[:, j], linestyle=line_style, color=line_color, linewidth=4)
-                axs_qs[j, i].set_yticks([x[:, j].min(), x[:, j].max()])
-                axs_qs[j, i].set_yticklabels([f"${x[:, j].min():.2f}$", f"${x[:, j].max():.2f}$"])
+    #     for i, x in enumerate([q, dq, ddq]):
+    #         for j in range(x.shape[1]):
+    #             axs_qs[j, i].plot(t.detach().cpu(), x[:, j], linestyle=line_style, color=line_color, linewidth=4)
+    #             axs_qs[j, i].set_yticks([x[:, j].min(), x[:, j].max()])
+    #             axs_qs[j, i].set_yticklabels([f"${x[:, j].min():.2f}$", f"${x[:, j].max():.2f}$"])
 
-        if phase_class == "PhaseTimeLinear":
-            phase_time_class_fn = PhaseTimeLinear
-        elif phase_class == "PhaseTimeSigmoid":
-            phase_time_class_fn = partial(PhaseTimeSigmoid, **phase_time_args)
-        else:
-            raise NotImplementedError
+    #     if phase_class == "PhaseTimeLinear":
+    #         phase_time_class_fn = PhaseTimeLinear
+    #     elif phase_class == "PhaseTimeSigmoid":
+    #         phase_time_class_fn = partial(PhaseTimeSigmoid, **phase_time_args)
+    #     else:
+    #         raise NotImplementedError
 
-        # plot the phase variable in time
-        phase = phase_time_class_fn(trajectory_duration=trajectory_duration, num_T_pts=num_T_pts)
-        t_np = phase.t.cpu().detach().numpy()
-        axs_phase.plot(t_np, phase.s.cpu().detach(), color=line_color, linestyle="solid", linewidth=4, label="s")
-        axs_phase.plot(t_np, phase.rs.cpu().detach(), color=line_color, linestyle="dashed", linewidth=4, label="ds/dt")
-        axs_phase.plot(
-            t_np, phase.dr_ds.cpu().detach(), color=line_color, linestyle="dotted", linewidth=4, label="d^2s/dt^2"
-        )
-        axs_phase.set_xlabel("t")
-        axs_phase.legend()
+    #     # plot the phase variable in time
+    #     phase = phase_time_class_fn(trajectory_duration=trajectory_duration, num_T_pts=num_T_pts)
+    #     t_np = phase.t.cpu().detach().numpy()
+    #     axs_phase.plot(t_np, phase.s.cpu().detach(), color=line_color, linestyle="solid", linewidth=4, label="s")
+    #     axs_phase.plot(t_np, phase.rs.cpu().detach(), color=line_color, linestyle="dashed", linewidth=4, label="ds/dt")
+    #     axs_phase.plot(
+    #         t_np, phase.dr_ds.cpu().detach(), color=line_color, linestyle="dotted", linewidth=4, label="d^2s/dt^2"
+    #     )
+    #     axs_phase.set_xlabel("t")
+    #     axs_phase.legend()
 
-        # plot ds_dt in phase
-        s_np = phase.s.cpu().detach().numpy()
-        axs_rs.plot(s_np, phase.rs.cpu().detach(), color=line_color, linestyle="dashed", linewidth=4, label="ds/dt")
-        axs_rs.plot(
-            s_np, phase.dr_ds.cpu().detach(), color=line_color, linestyle="dotted", linewidth=4, label="d^2s/dt^2"
-        )
-        axs_rs.set_xlabel("s")
-        axs_rs.legend()
+    #     # plot ds_dt in phase
+    #     s_np = phase.s.cpu().detach().numpy()
+    #     axs_rs.plot(s_np, phase.rs.cpu().detach(), color=line_color, linestyle="dashed", linewidth=4, label="ds/dt")
+    #     axs_rs.plot(
+    #         s_np, phase.dr_ds.cpu().detach(), color=line_color, linestyle="dotted", linewidth=4, label="d^2s/dt^2"
+    #     )
+    #     axs_rs.set_xlabel("s")
+    #     axs_rs.legend()
 
-    plt.show()
+    # plt.show()
+
+    parametric_traj = ParametricTrajectoryBspline(
+        n_control_points=n_control_points,
+        degree=5,
+        num_T_pts=num_T_pts,
+        zero_vel_at_start_and_goal=True,
+        zero_acc_at_start_and_goal=True,
+        trajectory_duration=trajectory_duration,
+        phase_time_class='PhaseTimeLinear',
+        phase_time_args={},
+        tensor_args=dict(device="cpu", dtype=torch.float32),
+    )
+    print(parametric_traj.phase_time.rs[...,None])
+    print(parametric_traj.phase_time.t)
+
+
+    rs_tmp = parametric_traj.phase_time.rs_fn(parametric_traj.phase_time.s)
+    print(rs_tmp)
+    from phase_time import convert_r_to_t
+
+    t_tmp = convert_r_to_t(rs_tmp)
+
+    print(t_tmp)
+
+    ratio = t_tmp[-1] / trajectory_duration
+
+    print(ratio)

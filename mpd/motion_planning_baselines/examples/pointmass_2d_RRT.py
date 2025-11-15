@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import isaacgym
 import torch
 
 from mp_baselines.planners.rrt_connect import RRTConnect
@@ -20,7 +21,7 @@ allow_ops_in_compiled_graph()
 
 if __name__ == "__main__":
     planner = "rrt-connect"
-    # parametric_trajectory = 'rrt-star'
+    #parametric_trajectory = 'rrt-star'
 
     seed = 1
     fix_random_seed(seed)
@@ -48,7 +49,7 @@ if __name__ == "__main__":
     task = PlanningTask(
         env=env,
         robot=robot,
-        # ws_limits=torch.tensor([[-0.85, -0.85], [0.95, 0.95]], **tensor_args),  # workspace limits
+        # ws_limits=torch.tensor([e[-0.85, -0.85], [0.95, 0.95]], **tensor_args),  # workspace limits
         # use_occupancy_map=True,  # whether to create and evaluate collisions on an occupancy map
         use_occupancy_map=False,
         cell_size=0.001,

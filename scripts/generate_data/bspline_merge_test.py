@@ -93,7 +93,7 @@ def get_new_control_point(pos, vel, acc, h, T) :
 #         res_dict["right"] = torch.stack((P_N_2, P_N_1, P_N), axis = 1)
 
     # return res_dict
-def remove_knot_once(t, c, k, u, tol=1e-10):
+def remove_knot(t, c, k, u, tol=1e-10):
     """
     Remove knot value `u` exactly once from a (clamped) B-spline curve (t,c,k).
     Returns (t_new, c_new). Preserves geometry exactly when removal is feasible.
@@ -122,10 +122,13 @@ def remove_knot_once(t, c, k, u, tol=1e-10):
     """
     t = np.asarray(t, dtype=float)
     c = np.asarray(c)
-    m = len(t) - 1
-    n = c.shape[0] - 1
-    print(len(t), n) # 38 26
-    assert len(t) == n + k + 2, "knot/coeff size mismatch: len(t) must equal len(c)+k+1"
+    m = len(t) - k #final removed knot
+    n = c.shape[0] - k #final removed control point
+    print(len(t), len(c)) 
+    print(t)
+    print(c)
+    # m = n + k + 1
+    assert m == n + k + 1, "knot/coeff size mismatch: len(t) must equal len(c)+k+1"
 
     # Locate an occurrence of u and its multiplicity s (count exact with a small tol)
     idx = np.where(np.isclose(t, u, atol=1e-12, rtol=0.0))[0]
@@ -133,11 +136,12 @@ def remove_knot_once(t, c, k, u, tol=1e-10):
         raise ValueError("u is not a knot in t")
     r_first = idx[0]
     r_last  = idx[-1]
-    s = idx.size
+    s = idx.size # multiplicity 
+    print(f"r_first : {r_first}, {u} multiplicity : {s}")
 
     # Choose which copy to remove. For interior removals it's customary to
-    # remove the *first* interior occurrence (any copy gives the same result).
-    r = r_first
+    # remove the *last* interior occurrence (any copy gives the same result).
+    r = r_last
 
     # Make sure u is removable (must be interior: k <= r <= m-k-1)
     if r < k or r > m - k - 1:
@@ -148,50 +152,64 @@ def remove_knot_once(t, c, k, u, tol=1e-10):
     last  = r - s      # inclusive
     # Work arrays (candidates from left and right)
     L = c.copy()
-    R = c.copy()
+    R  = c.copy()
 
     # March from the left: overwrite L[first..last] in-place
-    for j in range(1, k - s + 1):  # number of inner “layers”
-        i_start = first
-        i_end   = last - (j - 1)   # inclusive upper bound before this layer shrinks
-        for i in range(i_start, i_end):
-            denom = t[i + k + 1] - t[i]
-            alpha = 0.0 if denom == 0.0 else (u - t[i]) / denom
-            # inverse of insertion: P_{i}^{prev} = (P_{i}^{curr} - alpha * P_{i+1}^{prev}) / (1 - alpha)
-            L[i] = (L[i] - alpha * L[i + 1]) / (1.0 - alpha)
+    print("number of inner layer", k-s+1)
 
-    # March from the right: overwrite R[first..last] in-place
-    for j in range(1, k - s + 1):
-        i_start = last
-        i_end   = first + (j - 1)  # we go down to (i_end+1)
-        for i in range(i_start, i_end, -1):
-            denom = t[i + k + 1] - t[i]
-            alpha = 0.0 if denom == 0.0 else (u - t[i]) / denom
-            # symmetric inverse: P_{i}^{prev} = (P_{i}^{curr} - (1 - alpha) * P_{i-1}^{prev}) / alpha
-            R[i] = (R[i] - (1.0 - alpha) * R[i - 1]) / (alpha if alpha != 0.0 else 1.0)
+    i_start = first + 1 # 16
+    i_last  = last - 1  # 14
+    for layer in range(1, k+1) : # remove k times
+        i_start -= 1 
+        i_last += 1
+        i = i_start
+        j = i_last 
+        print(layer,"th ")
+        while (j-i > layer-1) : 
+            denom = t[i + k + layer] - t[i]
+            a_i = 0.0 if denom == 0.0 else (u - t[i]) / denom
+            denom = t[j + k + 1] - t[j - layer + 1]
+            a_j = 0.0 if denom == 0.0 else (u - t[j - layer + 1]) / denom
+            print("i :", i, a_i, ", j :",j, a_j)
+            L[i] = L[i-1] if a_i == 0.0 else (L[i] - (1-a_i) * L[i - 1]) / a_i
+            R[j] = R[j+1] if a_j == 1.0 else (R[j] - a_j * R[j + 1]) / (1.0 - a_j)
+            i += 1
+            j -= 1
 
+        print(L[i-1], i-1)
+        print(R[j+1], j+1)
     # Consistency check: the two constructions must agree on the overlap.
     # It suffices to compare any one index inside [first .. last]; use mid.
-    mid = (first + last) // 2
-    if not np.allclose(L[mid], R[mid], atol=tol, rtol=0.0):
-        raise ValueError("knot removal would change the curve beyond tolerance")
-
-    # Commit: overwrite the band with one side (L) and drop one control point.
-    c_upd = c.copy()
-    c_upd[first:last+1] = L[first:last+1]
-
-    # Build the new arrays (remove control point at index `last` and knot at r)
+    # mid = (first + last) // 2
+    # if not np.allclose(L[mid], R[mid], atol=tol, rtol=0.0):
+    #     raise ValueError("knot removal would change the curve beyond tolerance")
+    # print (last, first) # 15, 16
+    # print(c)
+    # print(L)
+    # print(R)
+    # if last+1 > first : 
+    # print("original part :")
+    # print(c[11:21])
+    # print("modified part : ")
+    # # 0 ~ 16 -> 0 ~ 14
+    # print(L[11:21]) # 12, 13, 14, 15
+    # # 16 ~ 32 -> 19 ~ 32
+    # print(R[11:21]) # 15, 16, 17, 18, 19
+    # print(r_first, r_last) # r_first 16 / r_last 21
+    # print(L[r_first + 1 - (k-1)], R[r_last + 1 - (k-1)]) # r_first + 1 - (k-1)
+    
+    if not np.allclose(L[r_first + 1 - (k-1)], R[r_last + 1 - (k-1)], atol=tol):
+        raise ValueError("knot removal changes the curve")
     if c.ndim == 1:
         c_new = np.empty(n, dtype=c.dtype)
     else:
         c_new = np.empty((n,) + c.shape[1:], dtype=c.dtype)
-
-    c_new[:last]      = c_upd[:last]
-    c_new[last:]      = c_upd[last+1:]      # shift down by 1 after the removed index
-
+    c_new[:r_first + 1 - (k-1)] = L[:r_first + 1 - (k-1)]
+    c_new[r_first + 1 - (k-1):] = R[r_last + 1 - (k-1):]
+    
     t_new = np.empty(m, dtype=t.dtype)
-    t_new[:r]         = t[:r]
-    t_new[r:]         = t[r+1:]             # remove the chosen u at position r
+    t_new[:r_first + 1] = t[:r_first + 1]
+    t_new[r_first + 1:] = t[r_last + 1:]   
 
     return t_new, c_new
 
@@ -200,21 +218,21 @@ def merge_splines(left, right) :
     k = left.k
     # map back to global parameter
     # assume left, right has same time duration
-    a_ = 0.5
-    tL = a_ * left.t
-    tR = a_ + (1 - a_) * right.t
+    a = 0.5
+    tL = a * left.t
+    tR = a + (1 - a) * right.t
     cL, cR = left.c, right.c
-    a = 0.72
     # concatenate (keep one block of 'a' knots and avoid duplicating end CPs)
     t_glued = np.hstack([tL[:-(k+1)], tR])
     #c_glued = np.vstack([ cL[:-k], cR ])
     c_glued = np.vstack([ cL, cR ])
-    print(t_glued)
-    print(c_glued)
+    print("t_glued : ",len(t_glued), "c_glued : ", len(c_glued))
+    #print(t_glued)
+    #print(c_glued)
     # now remove knot 'a' exactly k times (inverse of insertion)
     t, c = t_glued, c_glued
-    for _ in range(k):
-        t, c = remove_knot_once(t, c, k, a)   # implement or call your helper
+    # remove knot for k times
+    t,c = remove_knot(t,c,k,a)
     return interpolate.BSpline(t, c, k)
 
 def load_spline(data_dir) : 
@@ -366,14 +384,19 @@ def main(data_dir) :
     scipy_l = []
     for task_id in range(len(bspl_l)) :
         spline_l = []
+        scipy_l = []
         new_q_cps = []
         q_cps_all = []
         q_trajs_pos_all = []
         q_trajs_vel_all = []
         q_trajs_acc_all = []
+        print("answer bspline before split ")
+        ans_spline = split_curve_scipy(bspl_l[task_id],prob[0][0], prob[1][1])
+        print(ans_spline.t)
+        print(ans_spline.c)
         for i,p in enumerate(prob) : 
             tmp_spline = split_curve_scipy(bspl_l[task_id], p[0], p[1])
-            scipy_l.append(tmp_spline)
+            #scipy_l.append(tmp_spline)
             new_q_cps = to_torch(tmp_spline.c, **tensor_args)
             tmp_traj = ParametricTrajectoryBspline(
                 n_control_points=len(new_q_cps),
@@ -388,11 +411,16 @@ def main(data_dir) :
                 phase_time_class="PhaseTimeLinear",
             )
             spline_l.append(tmp_traj)
+            # create interpolate.BSpline from bspline (normalized knots)
+            scipy_l.append(interpolate.BSpline( t = tmp_traj.bspline.u,
+                                               c = tmp_spline.c, 
+                                               k = tmp_traj.bspline.d))
+            
             scale = tmp_traj.phase_time.rs[0] # same for right
             if i == 1 : 
                 h = 1.0 / (tmp_traj.bspline.m - 2 * tmp_traj.bspline.d)
                 T = tmp_traj.bspline.num_T_pts
-                print("before : ",new_q_cps)
+                #print("before : ",new_q_cps)
                 # previous end value 
                 #scale = 1
                 new_right_cps = get_new_control_point(q_trajs_pos_all[-1][0,-1,:], 
@@ -416,7 +444,7 @@ def main(data_dir) :
                 #                                         h, T)
                 # new_q_cps[:3] = new_right_cps["left"][0]
                 
-                print("after : ",new_q_cps)
+                #print("after : ",new_q_cps)
 
 
 
@@ -469,7 +497,7 @@ def main(data_dir) :
         # print(q_trajs_acc_ref[task_id, l_acc_idx], q_trajs_acc_ref[task_id, l_vel_idx])
         # print(l_acc_idx, r_acc_idx)
 
-        print("new control point")
+        #print("new control point")
         h = 1.0 / (spline_l[-1].bspline.m - 2 * spline_l[-1].bspline.d)
         T = spline_l[-1].bspline.num_T_pts
         scale = spline_l[-1].phase_time.rs[0]
@@ -481,25 +509,25 @@ def main(data_dir) :
         #     to_torch(q_trajs_vel_all[0][-1], **tensor_args)/scale,
         #     to_torch(q_trajs_acc_all[0][-1],**tensor_args)/(scale*scale),
         #              h, T)
-        print(q_cps_all[1][:3])
+        #print(q_cps_all[1][:3])
         #print(new_right_cps)
 
         t_start = 0
         t_goal = 5 
         #partial_dur * len(prob)
-
         dt = partial_dur / (num_T_pts-1)
+        dt_merged = partial_dur * 2 / (2* num_T_pts-1)
         # Positions, velocities, accelerations
         q_trajs_filtered = (q_trajs_pos_all, q_trajs_vel_all, q_trajs_acc_all)
 
         # merge bspline
         merged_spline = merge_splines(scipy_l[0], scipy_l[1])
-        merged_q_cps = to_torch(tmp_spline.c, **tensor_args)
+        merged_q_cps = to_torch(merged_spline.c, **tensor_args)
         
         merged_traj = ParametricTrajectoryBspline(
                 n_control_points=len(merged_q_cps),
                 degree=5,
-                num_T_pts=num_T_pts*2 - 1,
+                num_T_pts=num_T_pts*2,
                 zero_vel_at_start_and_goal=False,
                 zero_acc_at_start_and_goal=False,
                 remove_outer_control_points=False,
@@ -510,9 +538,9 @@ def main(data_dir) :
             )
         q_trajs_merged_d = merged_traj.get_q_trajectory_in_phase(merged_q_cps, get_type=("pos","vel","acc"))
         scale = merged_traj.phase_time.rs[0]
-        q_trajs_merged_pos = to_numpy(q_trajs_d["pos"])
-        q_trajs_merged_vel = to_numpy(q_trajs_d["vel"] * scale)
-        q_trajs_merged_acc = to_numpy(q_trajs_d["acc"] * (scale * scale))
+        q_trajs_merged_pos = to_numpy(q_trajs_merged_d["pos"])
+        q_trajs_merged_vel = to_numpy(q_trajs_merged_d["vel"] * scale)
+        q_trajs_merged_acc = to_numpy(q_trajs_merged_d["acc"] * (scale * scale))
         q_trajs_merged = (q_trajs_merged_pos, q_trajs_merged_vel, q_trajs_merged_acc)
         for i, ax in enumerate(axs):
             for j, q_trajs_filtered_item in enumerate(q_trajs_filtered):
@@ -532,15 +560,15 @@ def main(data_dir) :
                 #         ax[j].plot(tmp_timesteps, q_trajs_filtered_item[i_hz,:,i], c = colors[i_hz], linestyle="solid")
                         # print(tmp_timesteps.shape, q_trajs_filtered_item[0,:].shape)
                 # plot merged spline
-                tmp_timesteps = 5 * prob[0][0] + dt*(np.arange(num_T_pts*2)-1)
-                ax[j].plot(tmp_timesteps, q_trajs_merged[j,:,i], c = colors[0], linestyle="solid")
+                tmp_timesteps = 5 * prob[0][0] + dt_merged*(np.arange(num_T_pts*2))
+                ax[j].plot(tmp_timesteps, q_trajs_merged[j][:,i], c = colors[0], linestyle="solid")
             ax[0].set_ylabel(f"$q_{i}$")
 
         # time limits
         t_eps = 0.1
         for ax in list(itertools.chain(*axs)):
             ax.set_xlim(t_start - t_eps, t_goal + t_eps)
-        fig.savefig(os.path.join(data_dir, f"figures/b_spline_merged-{task_id:03d}.png"), bbox_inches="tight")
+        fig.savefig(os.path.join(data_dir, f"figures/b_spline_merged-merged-{task_id:03d}.png"), bbox_inches="tight")
         plt.close(fig)
 
 if __name__ == "__main__" : 

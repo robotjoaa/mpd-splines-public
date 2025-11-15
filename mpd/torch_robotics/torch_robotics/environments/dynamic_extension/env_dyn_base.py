@@ -162,6 +162,43 @@ class EnvDynBase:
             if isinstance(obj, MovingObjectField):
                 obj.update_pose_at_time(time)
 
+    def update_moving_object_trajectory(self, object_name, new_trajectory):
+        """
+        Update the trajectory of a specific MovingObjectField by name.
+
+        Args:
+            object_name: Name of the MovingObjectField to update
+            new_trajectory: New trajectory object (e.g., LinearTrajectory)
+
+        Returns:
+            bool: True if object was found and updated, False otherwise
+        """
+        for obj in self.obj_fixed_list:
+            if isinstance(obj, MovingObjectField) and obj.name == object_name:
+                obj.trajectory = new_trajectory
+                return True
+        for obj in self.obj_extra_list:
+            if isinstance(obj, MovingObjectField) and obj.name == object_name:
+                obj.trajectory = new_trajectory
+                return True
+        return False
+
+    def update_all_moving_object_trajectories(self, trajectory_configs):
+        """
+        Update trajectories for multiple MovingObjectField instances.
+
+        Args:
+            trajectory_configs: Dict mapping object names to new trajectories
+                               e.g., {"moving_sphere": new_traj1, "moving_box": new_traj2}
+
+        Returns:
+            dict: Dict mapping object names to update success status
+        """
+        results = {}
+        for obj_name, new_trajectory in trajectory_configs.items():
+            results[obj_name] = self.update_moving_object_trajectory(obj_name, new_trajectory)
+        return results
+
     # ===== Enhanced rendering with automatic MovingObjectField support =====
 
     def render(self, ax=None, time=None):

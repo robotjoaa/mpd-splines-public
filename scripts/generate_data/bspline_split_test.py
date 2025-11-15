@@ -204,30 +204,30 @@ def split_curve_scipy(spl, a, b) :
    
     if a > 0 : 
         r_a = max(0, (spl.k + 1) - get_multiplicity(spl.t, a)) # current multiplicity at a
-        print(len(spl.t), len(spl.c)) # 36 30
+        # print(len(spl.t), len(spl.c)) # 36 30
         spl_a = interpolate.insert(a, spl ,m=r_a) 
     else : 
         spl_a = spl
     if b < 1 : 
-        r_b = max(0, (spl.k + 1) - get_multiplicity(spl.t, b))
+        r_b = max(0, (spl.k + 1) - get_multiplicity(spl_a.t, b))
         spl_b = interpolate.insert(b, spl_a, m=r_b)
     else : 
         spl_b = spl_a
 
-    #print(spl_b.t) 
-    #print(spl_b.c)
+    # print(spl_b.t) 
+    # print(spl_b.c)
     t2, c2, k = spl_b.t, spl_b.c, spl_b.k
 
     ia = np.where(np.isclose(t2, a))[0].max() 
     ib = np.where(np.isclose(t2, b))[0].min()
-    print(f"knot size : {len(t2)}, control point size : {len(c2)}") # 42 42
-    print("knot range :", ia, ib) # len = ib - ia + k
+    # print(f"knot size : {len(t2)}, control point size : {len(c2)}") # 42 42
+    # print("knot range :", ia, ib) # len = ib - ia + k
 
     t_split = t2[ia-k:ib+k+1]
     # assume multiplicity > 1 only occurs from a and b
     c_split = c2[ia-k:ib]
-    print("original c: ",spl.c)
-    print("modified c: ",c_split)
+    # print("original c: ",spl.c)
+    # print("modified c: ",c_split)
     spl_split = interpolate.BSpline(t_split, c_split, k)
     return spl_split
 

@@ -91,7 +91,8 @@ class PlanningTask(Task):
                             use_field_collision_ws_boundaries
         ) : 
         self.df_collision_self = self.robot.df_collision_self
-
+        # 0.03
+        # print("CollisionObjectDistanceField, cutoff_margin", obstacle_cutoff_margin)
         # collision field for objects
         self.df_collision_objects = CollisionObjectDistanceField(
             self.robot,

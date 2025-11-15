@@ -425,6 +425,14 @@ class GenerativeOptimizationPlanner:
         self.planning_task.set_q_pos_start_goal(q_pos_start, q_pos_goal)
         self.planning_task.set_ee_pose_goal(ee_pose_goal)
 
+        # Configure dynamic obstacles based on this specific planning problem
+        if hasattr(self.planning_task.env, 'configure_moving_objects_from_start_goal'):
+            dyn_obj_config = self.planning_task.env.configure_moving_objects_from_start_goal(q_pos_start, q_pos_goal)
+            results_ns.update(
+                dyn_obj_config=dyn_obj_config
+            )
+            if kwargs['debug_failed'] : 
+                return None
         # Plan trajectories with the generative optimization planner
         # Get also the reconstructed control points
         input_data_one_sample = self.dataset.create_data_sample_normalized(

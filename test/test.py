@@ -28,16 +28,20 @@ def plot_basis(spline) :
     Ns = spline.N 
     dNs = spline.dN
     ddNs = spline.ddN
+    dddNs = spline.dddN
     num_T_pts = Ns.shape[1]
     T = np.linspace(0.0, 1.0, num_T_pts)
+    #T = T[-10:]
     i = Ns.shape[2]-1
-    axs[0].plot(T, Ns[0,:,])
+    axs[0].plot(T, Ns[0,:,:])
     axs[0].set_title(f'N{i},{spline.d}')
     #for i in range(b_mat.shape[0]):
     axs[1].plot(T, dNs[0,:,:])
     axs[1].set_title(f'dN{i},{spline.d}')
     axs[2].plot(T, ddNs[0,:,:])
     axs[2].set_title(f'ddN{i},{spline.d}')
+    # axs[3].plot(T, dddNs[0,:,:])
+    # axs[3].set_title(f'dddN{i},{spline.d}')
     # plt.title(f'B-spline Basis Functions (degree={spline.d}, n={spline.n_pts})')
     # plt.xlabel('t (normalized parameter)')
     # plt.ylabel('Basis Function Value')

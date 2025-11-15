@@ -194,7 +194,19 @@ def experiment(
         idx_sample_l = np.random.choice(np.arange(len(train_subset)), n_start_goal_states)
     else:
         idx_sample_l = np.random.choice(np.arange(len(val_subset)), n_start_goal_states)
+
+    # reproduce failed index
+    # failed_dict = {
+    #     "bspline" : [18, 20, 29, 42, 57, 83, 90],
+    #     "waypoints" : [18, 20, 24, 29, 42, 68, 87, 90],
+    # }
+    failed_dict = {
+        "bspline" : [18, 20, 29, 42],
+        "waypoints" : [18, 20, 29, 42],
+    }
+    failed_idx = failed_dict[args_inference.model_selection]
     for idx_sg, idx_sample in enumerate(idx_sample_l):
+        
         print(f"\n-------------------------------------------------------------------------------------------------")
         print(f"----------------PLANNING {idx_sg+1}/{n_start_goal_states}------------------")
         print(f"--------------------------------------------------------------------------------------------------")
@@ -215,11 +227,23 @@ def experiment(
         # Run motion planning inference
         print(f"\n----------------PLAN TRAJECTORIES----------------")
         print(f"Starting inference...")
-        results_single_plan = generative_optimization_planner.plan_trajectory(
-            q_pos_start, q_pos_goal, ee_pose_goal, results_ns=results_single_plan, debug=debug
-        )
-        print(f"...inference finished.")
 
+        debug_failed = False
+        if idx_sg not in failed_idx : 
+            debug_failed = True
+        
+        results_single_plan = generative_optimization_planner.plan_trajectory(
+            q_pos_start, q_pos_goal, ee_pose_goal, results_ns=results_single_plan, debug=debug, debug_failed=debug_failed
+        )
+        if idx_sg not in failed_idx : 
+            continue
+    
+        print(f"...inference finished.")
+        # if 'dyn_obj_config' in results_single_plan : 
+        #     print(f"dyn_obj_config: {results_single_plan.dyn_obj_config}")
+
+        # reproduce failed index, delayed for obj sampling in plan_trajectory 
+        
         ############################################################################################################
         # Show in pybullet the best trajectory
         if render_pybullet and results_single_plan.q_trajs_pos_best is not None:
@@ -301,6 +325,7 @@ def experiment(
 
         ############################################################################################################
         # Render sampling results
+        
         render_results(
             args_inference,
             planning_task,
@@ -312,7 +337,7 @@ def experiment(
             render_joint_space_time_iters=render_joint_space_time_iters,
             render_joint_space_env_iters=render_joint_space_env_iters,
             render_planning_env_robot_opt_iters=render_env_robot_opt_iters,
-            render_planning_env_robot_trajectories=render_env_robot_trajectories,
+            render_planning_env_robot_trajectories=render_env_robot_trajectories, 
             debug=debug,
         )
 
