@@ -53,9 +53,9 @@ def experiment(
     save_results_single_plan_low_mem: bool = False,
     ########################################################################
     # Visualization options
-    render_joint_space_time_iters: bool = True,
-    render_joint_space_env_iters: bool = True,
-    render_env_robot_opt_iters: bool = True,
+    render_joint_space_time_iters: bool = False,
+    render_joint_space_env_iters: bool = False,
+    render_env_robot_opt_iters: bool = False,
     render_env_robot_trajectories: bool = True,
     render_pybullet: bool = False,
     draw_collision_spheres: bool = False,
@@ -69,8 +69,18 @@ def experiment(
     # MANDATORY
     # seed: int = int(time.time()),
     seed: int = 2,
-    results_dir: str = "logs",
+    results_dir: str = "/home/sisrel/pjw/mpd-splines-public/scripts/inference/test_logs",
     ########################################################################
+    # # dummy variables for subfolders
+    # dataset_subdir__=dataset_subdir,
+    # extra_objects__=extra_objects,
+    # planner_alg__=planner_alg,
+    # model_selection__=model_selection,
+    # phase_time_class__=phase_time_class,
+    # diffusion_sampling_method__=diffusion_sampling_method,
+    # n_diffusion_steps_without_noise__=n_diffusion_steps_without_noise,
+    # project_gradient_hierarchy__=project_gradient_hierarchy,
+    # trajectory_duration__=trajectory_duration,
     **kwargs,
 ):
     # Set random seed for reproducibility
@@ -81,6 +91,32 @@ def experiment(
 
     # Save and load the inference configuration
     args_inference = DotMap(load_params_from_yaml(cfg_inference_path))
+
+    extra_objects = True 
+    extraobjects_env = "EnvDynSimple2DExtraObjects" # "EnvSimple2DExtraObjectsV00"
+    model_selection = "bspline" # "waypoints"
+    trajectory_duration = 4.0
+    num_T_pts = 50
+    n_trajectory_samples = 100 #100
+    moving_object_margin_scale = 2.0
+    moving_object_gradient_scale = 10.0
+
+    if extra_objects:
+        args_inference.env_id_replace = extraobjects_env
+    else:
+        args_inference.env_id_replace = None
+
+    args_inference.model_selection = model_selection
+    args_inference.phase_time_class = "PhaseTimeLinear"
+    args_inference.planner_alg = "mpd"
+    args_inference.diffusion_sampling_method = "ddim"
+    args_inference.n_diffusion_steps_without_noise = 0
+    args_inference.project_gradient_hierarchy = False
+    args_inference.trajectory_duration = trajectory_duration
+    args_inference.n_trajectory_samples = n_trajectory_samples
+    args_inference.num_T_pts = num_T_pts
+    args_inference.moving_object_margin_scale = moving_object_margin_scale
+    args_inference.moving_object_gradient_scale = moving_object_gradient_scale
 
     if "cvae" in args_inference.planner_alg:
         if args_inference.model_selection == "bspline":
@@ -228,9 +264,7 @@ def experiment(
     }
     failed_idx = failed_dict[args_inference.model_selection]
     debug_failed = True
-    for idx_sg, idx_sample in enumerate(idx_sample_l):
-        if debug_failed and idx_sg not in failed_idx : 
-            continue
+    for idx_sg, sample_id in enumerate(failed_idx):
 
         print(f"\n-------------------------------------------------------------------------------------------------")
         print(f"----------------PLANNING {idx_sg+1}/{n_start_goal_states}------------------")
@@ -238,7 +272,12 @@ def experiment(
 
         results_single_plan = DotMap(t_generator=0.0, t_guide=0.0)
 
-        q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
+        q_pos_start = to_torch([-0.7684, -0.9165], **tensor_args)
+        q_pos_goal = to_torch([0.4,  -0.25],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
+        ee_pose_goal = to_torch([[ 1.0000,  0.0000,  0.0000, 0.4],
+                                [ 0.0000,  1.0000,  0.0000,  -0.25],
+                                [ 0.0000,  0.0000,  1.0000,  0.0000]],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
+        # q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
 
         print("\n----------------START AND GOAL states----------------")
         print(f"q_pos_start: {q_pos_start}")
@@ -254,10 +293,10 @@ def experiment(
         print(f"Starting inference...")
 
         if loaded_map is not None : 
-            map_config = loaded_map[idx_sg]
+            map_config = loaded_map[sample_id]
 
-        if debug_failed and idx_sg in failed_idx : 
-            map_config = failed_obj_dict[idx_sg]
+        if debug_failed and sample_id in failed_idx : 
+            map_config = failed_obj_dict[sample_id]
         
         results_single_plan = generative_optimization_planner.plan_trajectory(
             q_pos_start, q_pos_goal, ee_pose_goal, results_ns=results_single_plan, debug=debug, 
@@ -309,7 +348,7 @@ def experiment(
                     stop_robot_if_in_contact=False, #Only valid trajectories are given
                     make_video=render_isaacgym_movie,
                     video_duration=args_inference.trajectory_duration,
-                    video_path=os.path.join(results_dir, f"isaacgym-{idx_sg:03d}.mp4"),
+                    video_path=os.path.join(results_dir, f"isaacgym-{sample_id:03d}.mp4"),
                     make_gif=False,
                 )
             results_single_plan.isaacgym_statistics = isaacgym_statistics
@@ -345,7 +384,7 @@ def experiment(
             )
         torch.save(
             results_single_plan_to_save,
-            os.path.join(results_dir, f"results_single_plan-{idx_sg:03d}.pt"),
+            os.path.join(results_dir, f"results_single_plan-{sample_id:03d}.pt"),
             _use_new_zipfile_serialization=True,
         )
 
@@ -353,7 +392,7 @@ def experiment(
         # Render sampling results
         render_time = None 
         if failed_dict is not None : 
-            render_time = failed_time_dict[idx_sg] if idx_sg in failed_idx else None
+            render_time = failed_time_dict[sample_id] if sample_id in failed_idx else None
 
         render_results(
             args_inference,
@@ -361,7 +400,7 @@ def experiment(
             q_pos_start,
             q_pos_goal,
             results_single_plan,
-            idx_sg,
+            sample_id,
             results_dir,
             render_joint_space_time_iters=render_joint_space_time_iters,
             render_joint_space_env_iters=render_joint_space_env_iters,

@@ -25,7 +25,9 @@ from torch_robotics.torch_utils.torch_utils import (
 )
 from torch_robotics.trajectory.metrics import compute_smoothness, compute_ee_pose_errors, compute_path_length
 from torch_robotics.tasks import DynPlanningTask
-
+from torch_robotics.environments.dynamic_extension import (
+    LinearTrajectory
+)
 class EvaluationSamplesGenerator:
     """
     Get start and goal joint positions from the validation set, or randomly using the OMPL parametric_trajectory
@@ -242,32 +244,67 @@ def render_results(
         )
 
     if render_planning_env_robot_opt_iters:
-        # visualize in the planning environment
-        planning_task.animate_opt_iters_robots(
-            trajs_pos=results_single_plan.q_trajs_pos_iters,
-            start_state=q_pos_start,
-            goal_state=q_pos_goal,
-            traj_pos_best=results_single_plan.q_trajs_pos_best,
-            control_points=results_single_plan.control_points_iters,
-            video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-opt-iters-{idx:03d}.mp4"),
-            n_frames=max((2, len(results_single_plan.q_trajs_pos_iters))),
-            anim_time=args_inference.trajectory_duration,
-            filter_joint_limits_vel_acc=True,
-        )
+        if isinstance(planning_task, DynPlanningTask) :
+            # visualize in the planning environment
+            tmp_l = []
+            if kwargs['render_time'] is not None : 
+                tmp_l = kwargs['render_time']
+                print("skip render_planning_env_robot_opts_iters if render time not given")
+            for rt in tmp_l : 
+                planning_task.animate_opt_iters_robots(
+                    trajs_pos=results_single_plan.q_trajs_pos_iters,
+                    start_state=q_pos_start,
+                    goal_state=q_pos_goal,
+                    traj_pos_best=results_single_plan.q_trajs_pos_best,
+                    control_points=results_single_plan.control_points_iters,
+                    video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-opt-iters-{idx:03d}-t{rt}.mp4"),
+                    n_frames=max((2, len(results_single_plan.q_trajs_pos_iters))),
+                    anim_time=args_inference.trajectory_duration,
+                    filter_joint_limits_vel_acc=True,
+                    render_time = rt
+                )
 
-        # reconstructed control points and trajectories at each diffusion iteration
-        if results_single_plan.q_trajs_pos_recon_iters is not None:
+                # reconstructed control points and trajectories at each diffusion iteration
+                if results_single_plan.q_trajs_pos_recon_iters is not None:
+                    planning_task.animate_opt_iters_robots(
+                        trajs_pos=results_single_plan.q_trajs_pos_recon_iters,
+                        start_state=q_pos_start,
+                        goal_state=q_pos_goal,
+                        traj_pos_best=None,
+                        control_points=results_single_plan.control_points_recon_iters,
+                        video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-opt-iters-recon-{idx:03d}-t{rt}.mp4"),
+                        n_frames=max((2, len(results_single_plan.q_trajs_pos_iters))),
+                        anim_time=args_inference.trajectory_duration,
+                        filter_joint_limits_vel_acc=True,
+                        render_time = rt
+                    )
+        else : 
+            # visualize in the planning environment
             planning_task.animate_opt_iters_robots(
-                trajs_pos=results_single_plan.q_trajs_pos_recon_iters,
+                trajs_pos=results_single_plan.q_trajs_pos_iters,
                 start_state=q_pos_start,
                 goal_state=q_pos_goal,
-                traj_pos_best=None,
-                control_points=results_single_plan.control_points_recon_iters,
-                video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-opt-iters-recon-{idx:03d}.mp4"),
+                traj_pos_best=results_single_plan.q_trajs_pos_best,
+                control_points=results_single_plan.control_points_iters,
+                video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-opt-iters-{idx:03d}.mp4"),
                 n_frames=max((2, len(results_single_plan.q_trajs_pos_iters))),
                 anim_time=args_inference.trajectory_duration,
                 filter_joint_limits_vel_acc=True,
             )
+
+            # reconstructed control points and trajectories at each diffusion iteration
+            if results_single_plan.q_trajs_pos_recon_iters is not None:
+                planning_task.animate_opt_iters_robots(
+                    trajs_pos=results_single_plan.q_trajs_pos_recon_iters,
+                    start_state=q_pos_start,
+                    goal_state=q_pos_goal,
+                    traj_pos_best=None,
+                    control_points=results_single_plan.control_points_recon_iters,
+                    video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-opt-iters-recon-{idx:03d}.mp4"),
+                    n_frames=max((2, len(results_single_plan.q_trajs_pos_iters))),
+                    anim_time=args_inference.trajectory_duration,
+                    filter_joint_limits_vel_acc=True,
+                )
 
     if render_planning_env_robot_trajectories:
         # visualize in the planning environment
@@ -426,13 +463,30 @@ class GenerativeOptimizationPlanner:
         self.planning_task.set_ee_pose_goal(ee_pose_goal)
 
         # Configure dynamic obstacles based on this specific planning problem
-        if hasattr(self.planning_task.env, 'configure_moving_objects_from_start_goal'):
-            dyn_obj_config = self.planning_task.env.configure_moving_objects_from_start_goal(q_pos_start, q_pos_goal)
+        if kwargs['map_config'] is not None:
+            # create moving object from the config
+            trajectory_configs=  {}
+            # convert to tensor 
+            for k, v in kwargs['map_config'].items() : 
+                tmp_traj = LinearTrajectory(
+                    keyframe_times = v['keyframe_times'],
+                    keyframe_positions = v['keyframe_positions'],
+                    tensor_args = self.tensor_args
+                )
+                trajectory_configs[k] = tmp_traj
+            
+            self.planning_task.env.update_all_moving_object_trajectories(trajectory_configs)
             results_ns.update(
-                dyn_obj_config=dyn_obj_config
+                dyn_obj_config= kwargs['map_config']
             )
-            if kwargs['debug_failed'] : 
-                return None
+        else : 
+            # create random dyn objs 
+            if hasattr(self.planning_task.env, 'configure_moving_objects_from_start_goal'):
+                dyn_obj_config = self.planning_task.env.configure_moving_objects_from_start_goal(q_pos_start, q_pos_goal)
+                results_ns.update(
+                    dyn_obj_config=dyn_obj_config
+                )
+            
         # Plan trajectories with the generative optimization planner
         # Get also the reconstructed control points
         input_data_one_sample = self.dataset.create_data_sample_normalized(

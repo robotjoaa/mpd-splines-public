@@ -21,6 +21,13 @@ from torch_robotics.tasks.tasks import PlanningTask
 from torch_robotics.tasks.dynamic_tasks import DynPlanningTask
 from torch_robotics.torch_utils.torch_utils import freeze_torch_model_params, DEFAULT_TENSOR_ARGS
 
+def get_problem_config(
+    **kwargs
+) : 
+    return None 
+    base_dir = os.path.join(DATASET_BASE_DIR, problem_dir)
+    ### TODO : load problems configuration from the problem dir 
+    return None
 
 def get_planning_task_and_dataset(
     parametric_trajectory_class=None,
@@ -149,14 +156,24 @@ def get_planning_task_and_dataset(
         (hasattr(env, 'is_static') and not env.is_static)
     )
 
-    TaskClass = DynPlanningTask if is_dynamic_env else PlanningTask
-    planning_task = TaskClass(
-        env=env,
-        robot=robot,
-        parametric_trajectory=parametric_trajectory,
-        **dataset_args,
-        tensor_args=tensor_args,
-    )
+    if is_dynamic_env : 
+        planning_task = DynPlanningTask(
+            env=env,
+            robot=robot,
+            parametric_trajectory=parametric_trajectory,
+            **dataset_args,
+            moving_object_gradient_scale = kwargs.get('moving_object_gradient_scale', 1),
+            moving_object_margin_scale = kwargs.get('moving_object_margin_scale', 1),
+            tensor_args=tensor_args,
+        )
+    else : 
+        planning_task = PlanningTask(
+            env=env,
+            robot=robot,
+            parametric_trajectory=parametric_trajectory,
+            **dataset_args,
+            tensor_args=tensor_args,
+        )
 
     ######################################################################################
     # -------------------------- Load dataset and create dataloaders ---------------------

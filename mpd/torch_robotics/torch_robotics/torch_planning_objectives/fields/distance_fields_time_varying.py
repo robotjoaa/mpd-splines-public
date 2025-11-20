@@ -12,7 +12,7 @@ from torch_robotics.torch_planning_objectives.fields.distance_fields import (
     EmbodimentDistanceFieldBase
 )
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
-
+from torch_robotics.environments.dynamic_extension import MovingObjectField
 
 class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
     """
@@ -35,6 +35,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             parametric_trajectory: ParametricTrajectory instance to get time values
             *args, **kwargs: Passed to parent CollisionObjectBase
         """
+        self.grad_scale = kwargs.pop("grad_scale", 1)
         super().__init__(*args, **kwargs)
         self.df_time_varying_obj_fn = df_time_varying_obj_fn
         self.parametric_trajectory = parametric_trajectory
@@ -123,12 +124,16 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
         if get_gradient:
             dfs_gradient = []
             for df_time_varying in df_obj_list:
+                scale = 1 
+                if isinstance(df_time_varying, MovingObjectField) : 
+                    scale = self.grad_scale 
                 sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
                     link_pos_query, timesteps=timesteps_query, get_gradient=True
                 )
                 # sdf_vals: (batch*horizon*num_links,)
                 # sdf_gradient: (batch*horizon*num_links, dim)
-
+                # for larger gradient for moving object field
+                sdf_gradient = sdf_gradient * scale
                 # Reshape back
                 sdf_vals = sdf_vals.reshape(bh, num_links)
                 sdf_gradient = sdf_gradient.reshape(bh, num_links, dim)

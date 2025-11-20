@@ -72,9 +72,13 @@ class DynPlanningTask(PlanningTask):
         Args:
             **kwargs: All arguments passed to parent PlanningTask constructor
         """
+        self.grad_scale = kwargs.pop('moving_object_gradient_scale', 1)
+        self.margin_scale = kwargs.pop('moving_object_margin_scale', 1)
+
         super().__init__(**kwargs)
         # Detect if environment is dynamic
         self.is_dynamic = self._check_if_dynamic()
+        print(f"DynPlanningTask : grad x {self.grad_scale}, margin x {self.margin_scale}")
 
     def set_collision_fields(
         self,
@@ -100,9 +104,7 @@ class DynPlanningTask(PlanningTask):
 
         # Self-collision field (static)
         self.df_collision_self = self.robot.df_collision_self
-
-        # increased cutoff_margin for dynamic tasks
-        scale = 4 # 0.03 -> 0.06
+        
         # print("CollisionObjectDistanceFieldTimeVarying, cutoff_margin", obstacle_cutoff_margin*scale)
         # Time-varying collision field for objects
         self.df_collision_objects = CollisionObjectDistanceFieldTimeVarying(
@@ -110,8 +112,9 @@ class DynPlanningTask(PlanningTask):
             df_time_varying_obj_fn=self.env.get_df_obj_list,
             parametric_trajectory=self.parametric_trajectory,
             link_margins_for_object_collision_checking_tensor=self.robot.link_collision_spheres_radii,
-            cutoff_margin=obstacle_cutoff_margin * scale,
+            cutoff_margin=obstacle_cutoff_margin * self.margin_scale, # increased cutoff_margin for dynamic tasks
             tensor_args=self.tensor_args,
+            grad_scale = self.grad_scale
         )
 
         # Time-varying collision field for extra objects
@@ -122,8 +125,9 @@ class DynPlanningTask(PlanningTask):
                 df_time_varying_obj_fn=partial(self.env.get_df_obj_list, return_extra_objects_only=True),
                 parametric_trajectory=self.parametric_trajectory,
                 link_margins_for_object_collision_checking_tensor=self.robot.link_collision_spheres_radii,
-                cutoff_margin=obstacle_cutoff_margin * scale,
+                cutoff_margin=obstacle_cutoff_margin * self.margin_scale,
                 tensor_args=self.tensor_args,
+                grad_scale = self.grad_scale,
             )
             self._collision_fields_extra_objects = [self.df_collision_extra_objects]
         else:
@@ -205,7 +209,7 @@ class DynPlanningTask(PlanningTask):
             if hasattr(self.env, 'time_range'):
                 t_start, t_end = self.env.time_range
                 if horizon_size is None:
-                    horizon_size = 64  # Default
+                    horizon_size = 128  # Default
                 return torch.linspace(t_start, t_end, horizon_size, **self.tensor_args)
             else:
                 return None
@@ -245,7 +249,7 @@ class DynPlanningTask(PlanningTask):
                 self.env.render(ax)
         else:
             self.env.render(ax)
-        print("render_robot_trajectories")
+        #print("render_robot_trajectories")
         # Render trajectories
         if q_pos_trajs is not None:
             if color_collisions:
@@ -260,11 +264,19 @@ class DynPlanningTask(PlanningTask):
             else:
                 kwargs["colors"] = [self.colors["free"]] * len(q_pos_trajs)
 
-        self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs, **kwargs)
+        if kwargs['render_range'] is None :
+            self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs, **kwargs)
 
-        if q_pos_trajs_best is not None:
-            kwargs["colors"] = ["blue"]
-            self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs_best.unsqueeze(0), **kwargs)
+            if q_pos_trajs_best is not None:
+                kwargs["colors"] = ["blue"]
+                self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs_best.unsqueeze(0), **kwargs)
+        
+        else : 
+            self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs[:,kwargs['render_range'],:], **kwargs)
+
+            if q_pos_trajs_best is not None:
+                kwargs["colors"] = ["blue"]
+                self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs_best[kwargs['render_range'],:].unsqueeze(0), **kwargs)
 
         return fig, ax
 
@@ -460,6 +472,7 @@ class DynPlanningTask(PlanningTask):
         control_points=None,
         n_frames=10,
         remove_axes_labels_and_ticks=False,
+        render_time = None,
         **kwargs,
     ):
         """
@@ -489,17 +502,25 @@ class DynPlanningTask(PlanningTask):
             control_points_selection = control_points[idxs]
 
         # Get middle time for static rendering
-        render_time = None
+        # render_time = None
+        print(render_time)
         if self.is_dynamic:
             time_steps = self._get_timesteps_for_horizon(H)
-            if time_steps is not None:
+            if render_time is None : 
                 mid_idx = H // 2
-                render_time = time_steps[mid_idx]
-                if isinstance(render_time, torch.Tensor):
-                    render_time = float(render_time.cpu())
-
+                render_range = np.arange(max(0, mid_idx - 5), min(H, mid_idx + 5))
+                if time_steps is not None: 
+                    render_time = time_steps[mid_idx]
+                    if isinstance(render_time, torch.Tensor):
+                        render_time = float(render_time.cpu())
+            else : 
+                render_range = np.arange(max(0, render_time - 5), min(H, render_time + 5))
+                render_time = time_steps[render_time]
+        #print(render_range, render_time)
+        #print(trajs_pos_selection.shape)
+        #print(control_points_selection.shape)
+        #print(traj_pos_best.shape)
         fig, ax = create_fig_and_axes(dim=self.env.dim)
-
         def animate_fn(i, ax):
             ax.clear()
             ax.set_title(f"iter: {idxs[i]}/{S-1}")
@@ -510,6 +531,7 @@ class DynPlanningTask(PlanningTask):
                 control_points=control_points_selection[i],
                 q_pos_trajs_best=traj_pos_best if i == n_frames - 1 else None,
                 time=render_time,
+                render_range = render_range,
                 start_state=start_state,
                 goal_state=goal_state,
                 **kwargs,

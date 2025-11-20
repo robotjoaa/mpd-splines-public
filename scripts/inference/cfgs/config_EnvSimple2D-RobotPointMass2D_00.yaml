@@ -22,6 +22,9 @@ obstacle_cutoff_margin_extra: 0.02
 # Points whose distance to the objects is less than this margin are considered in collision
 margin_for_dense_collision_checking:  0.0
 
+# margin, gradient scales 
+moving_object_margin_scale: 4.0
+moving_object_gradient_scale: 100.0
 #######################################################################################################################
 # task options
 

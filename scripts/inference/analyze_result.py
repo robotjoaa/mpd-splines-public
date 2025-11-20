@@ -803,6 +803,9 @@ if __name__ == "__main__":
     # exp_name = "launch_inference-experiments-test_2025-11-07_17-32-29" # margin scale 1.5
     exp_name = "launch_inference-experiments-test_2025-11-07_17-35-52" # margin scale 4 
     # exp_name = "launch_inference-experiments-test_2025-11-07_17-40-57" # margin scale 4 failed
+    # exp_name = "launch_inference-experiments-test_2025-11-17_22-35-48" # margin 4 grad scale 2 
+    # exp_name = "launch_inference-experiments-test_2025-11-17_22-38-15" # margin 4 grad scale 10 
+    # exp_name = "launch_inference-experiments-test_2025-11-17_23-32-27" # margin 4 grad scale 100
     option_l = [["waypoints", "bspline"]] #bspline plot front
 
     # Load results
