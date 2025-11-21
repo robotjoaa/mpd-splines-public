@@ -13,6 +13,34 @@ from torch_robotics.trajectory.utils import interpolate_points_v1
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 
 
+def subsample_waypoints(sol_path, n_waypoints):
+    """
+    Subsample waypoints from a trajectory to get n_waypoints uniformly distributed points.
+    Always includes start and end points.
+
+    Args:
+        sol_path: Trajectory waypoints [H, D] where H is original horizon, D is dimensions
+        n_waypoints: Target number of waypoints (must be <= H)
+
+    Returns:
+        subsampled: Tensor of shape [n_waypoints, D]
+    """
+    if not isinstance(sol_path, torch.Tensor):
+        sol_path = torch.from_numpy(sol_path)
+
+    H, D = sol_path.shape
+
+    if n_waypoints >= H:
+        # If target is >= current, return as is
+        return sol_path
+
+    # Create uniformly spaced indices including start (0) and end (H-1)
+    indices = torch.linspace(0, H - 1, n_waypoints).long()
+
+    # Subsample the trajectory
+    return sol_path[indices]
+
+
 def adjust_waypoints(n_waypoints, context_qs, context_ee_goal_pose):
     # The Unet architecture accepts horizons that are multiples of 2^depth (8 in our case).
     # Adjust the waypoints, such that the number of trainable waypoints is a multiple of 8.
@@ -49,8 +77,25 @@ class TrajectoryDatasetWaypoints(TrajectoryDatasetBspline):
             data_reload_pickle_path = os.path.join(self.base_dir, f"{data_reload_prefix}.pickle")
 
             if os.path.exists(data_reload_pickle_path) and not self.reload_data:
+                print(data_reload_pickle_path)
                 # load the pre-processed dataset
                 self.reload_data_fn(data_reload_pickle_path, n_task_samples=n_task_samples)
+                # percentage_free_trajs_l, percentage_collision_intensity_l = self.run_collision_statistics()
+
+                # # save data to disk to speed up loading the next time
+                # data_to_save = {
+                #     "fields": self.fields,
+                #     "map_task_id_to_control_points_id": self.map_task_id_to_control_points_id,
+                #     "map_control_points_id_to_task_id": self.map_control_points_id_to_task_id,
+                #     "percentage_free_trajs": (np.mean(percentage_free_trajs_l), np.std(percentage_free_trajs_l)),
+                #     "percentage_collision_intensity": (
+                #         np.mean(percentage_collision_intensity_l),
+                #         np.std(percentage_collision_intensity_l),
+                #     ),
+                # }
+                # data_reload_pickle_path =  os.path.join(self.base_dir, f"{data_reload_prefix}.pickle")
+                # pickle.dump(data_to_save, open(data_reload_pickle_path, "wb"))
+              
             else:
                 # load the dataset to the cpu first
                 # load dataset file
@@ -73,10 +118,21 @@ class TrajectoryDatasetWaypoints(TrajectoryDatasetBspline):
                             break
 
                     sol_path = dataset_h5["sol_path"][i]
-                    control_points = interpolate_points_v1(
-                        torch.from_numpy(sol_path).to(dtype=self.tensor_args["dtype"])[None, ...],
-                        self.planning_task.parametric_trajectory.n_control_points,
-                    ).squeeze()
+
+                    # Check if we need to subsample or interpolate
+                    n_target_points = self.planning_task.parametric_trajectory.n_control_points
+                    if n_target_points <= sol_path.shape[0]:
+                        # Subsample waypoints (e.g., 80 -> 18)
+                        control_points = subsample_waypoints(
+                            sol_path,
+                            n_target_points
+                        ).to(dtype=self.tensor_args["dtype"])
+                    else:
+                        # Interpolate to get more points (original behavior)
+                        control_points = interpolate_points_v1(
+                            torch.from_numpy(sol_path).to(dtype=self.tensor_args["dtype"])[None, ...],
+                            n_target_points,
+                        ).squeeze()
 
                     if isinstance(self.planning_task.robot, robots.RobotPanda):
                         # If the number of joints is 9, then remove the last two points, which can be
@@ -126,7 +182,13 @@ class TrajectoryDatasetWaypoints(TrajectoryDatasetBspline):
                     torch.stack(q_goal_all),
                     device="cpu",
                 )
-
+                # # save data to disk to speed up loading the next time
+                # data_to_save = {
+                #     "fields": self.fields,
+                #     "map_task_id_to_control_points_id": self.map_task_id_to_control_points_id,
+                #     "map_control_points_id_to_task_id": self.map_control_points_id_to_task_id,
+                # }
+                # pickle.dump(data_to_save, open(data_reload_pickle_path, "wb"))
                 # compute collision free statistics of the fitted bspline
                 percentage_free_trajs_l, percentage_collision_intensity_l = self.run_collision_statistics()
 
@@ -145,6 +207,7 @@ class TrajectoryDatasetWaypoints(TrajectoryDatasetBspline):
 
             print("... done loading data.")
             print(f"Loading data took {t_load_data.elapsed:.2f} seconds.")
+            raise NotImplementedError
 
     def get_hard_conditions(self, data_d, **kwargs):
         hard_conds = {}

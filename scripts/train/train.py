@@ -17,7 +17,7 @@ from torch_robotics.torch_utils.torch_utils import get_torch_device
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
-os.environ["WANDB_API_KEY"] = "999"
+#os.environ["WANDB_API_KEY"] = "999"
 WANDB_MODE = "disabled"
 WANDB_ENTITY = "mpd-splines"
 DEBUG = True
@@ -130,13 +130,15 @@ def experiment(
     full_dataset = train_subset.dataset
 
     if debug:
-        full_dataset.render(
+        fig1, ax1, fig2, ax2 = full_dataset.render(
             task_id=0,
             render_joint_trajectories=True,
             render_robot_trajectories=True if full_dataset.planning_task.env.dim == 2 else False,
-            render_n_robot_trajectories=50,
+            # render_n_robot_trajectories=50,
         )
-        plt.show()
+        fig1.savefig(os.path.join(results_dir, f"joint.png"))
+        fig2.savefig(os.path.join(results_dir, f"robot.png"))
+        #plt.show()
 
     ########################################################################
     # Model

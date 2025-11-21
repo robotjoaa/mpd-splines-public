@@ -94,13 +94,16 @@ class PlanningTask(Task):
         # 0.03
         # print("CollisionObjectDistanceField, cutoff_margin", obstacle_cutoff_margin)
         # collision field for objects
-        self.df_collision_objects = CollisionObjectDistanceField(
-            self.robot,
-            df_obj_list_fn=self.env.get_df_obj_list,
-            link_margins_for_object_collision_checking_tensor=self.robot.link_collision_spheres_radii,
-            cutoff_margin=obstacle_cutoff_margin,
-            tensor_args=self.tensor_args,
-        )
+        if not self.env.get_df_obj_list() : 
+            self.df_collision_objects = None # for all empty case
+        else : 
+            self.df_collision_objects = CollisionObjectDistanceField(
+                self.robot,
+                df_obj_list_fn=self.env.get_df_obj_list,
+                link_margins_for_object_collision_checking_tensor=self.robot.link_collision_spheres_radii,
+                cutoff_margin=obstacle_cutoff_margin,
+                tensor_args=self.tensor_args,
+            )
 
         self.df_collision_extra_objects = None
         if self.env.obj_extra_list is not None:
@@ -349,12 +352,26 @@ class PlanningTask(Task):
         trajs_waypoints_collisions = self.compute_collision(
             trajs_interpolated, margin=self.margin_for_dense_collision_checking
         )
+        # print(trajs_waypoints_collisions)
+        if isinstance(trajs_waypoints_collisions,int) and trajs_waypoints_collisions == 0 : 
+            if q_trajs.ndim == 4 : 
+                Ns = q_trajs.shape[0]
+                Bs = q_trajs.shape[1]
+                trajs_valid_idxs = torch.stack(
+                    torch.meshgrid(
+                        torch.arange(Ns), torch.arange(Bs), indexing="ij"
+                        ),
+                    dim=-1, device= self.tensor_args['device']).reshape(-1, 2)
+                trajs_unvalid_idxs = torch.empty((0, 2), dtype=torch.long,  device= self.tensor_args['device'])
+            else : 
+                trajs_valid_idxs = torch.arange(q_trajs.shape[0], device= self.tensor_args['device']).unsqueeze(1)
+                trajs_unvalid_idxs = torch.empty((0, 1), dtype=torch.long,  device= self.tensor_args['device'])
+        else : 
+            if q_trajs.ndim == 4:
+                trajs_waypoints_collisions = einops.rearrange(trajs_waypoints_collisions, "(N B) H -> N B H", N=N, B=B)
 
-        if q_trajs.ndim == 4:
-            trajs_waypoints_collisions = einops.rearrange(trajs_waypoints_collisions, "(N B) H -> N B H", N=N, B=B)
-
-        trajs_valid_idxs = torch.argwhere(torch.logical_not(trajs_waypoints_collisions).all(dim=-1))
-        trajs_unvalid_idxs = torch.argwhere(trajs_waypoints_collisions.any(dim=-1))
+            trajs_valid_idxs = torch.argwhere(torch.logical_not(trajs_waypoints_collisions).all(dim=-1))
+            trajs_unvalid_idxs = torch.argwhere(trajs_waypoints_collisions.any(dim=-1))
 
         ###############################################################################################################
         # Filter the trajectories that are not in collision and are inside the joint limits
@@ -367,10 +384,12 @@ class PlanningTask(Task):
                 trajs_valid_tmp = q_trajs[trajs_valid_idxs.squeeze(), ...]
 
             trajs_valid_tmp_position = self.get_position(trajs_valid_tmp)
+            print(trajs_valid_tmp_position)
             check_list = [
                 trajs_valid_tmp_position >= self.robot.q_pos_min,
                 trajs_valid_tmp_position <= self.robot.q_pos_max,
             ]
+
             if filter_joint_limits_vel_acc:
                 if self.robot.dq_max is not None:
                     trajs_valid_tmp_velocity = self.get_velocity(trajs_valid_tmp)
@@ -441,6 +460,8 @@ class PlanningTask(Task):
         _, _, _, _, trajs_waypoints_collisions = self.get_trajs_unvalid_and_valid(
             q_trajs, return_indices=True, **kwargs
         )
+        if isinstance(trajs_waypoints_collisions, int) and trajs_waypoints_collisions == 0 : 
+            return torch.tensor(0.0, **self.tensor_args) 
         return torch.count_nonzero(trajs_waypoints_collisions) / trajs_waypoints_collisions.nelement()
 
     def compute_success_valid_trajs(self, q_trajs, **kwargs):

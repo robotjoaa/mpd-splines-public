@@ -127,9 +127,13 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
                 scale = 1 
                 if isinstance(df_time_varying, MovingObjectField) : 
                     scale = self.grad_scale 
-                sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
-                    link_pos_query, timesteps=timesteps_query, get_gradient=True
-                )
+                    sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
+                        link_pos_query, timesteps=timesteps_query, get_gradient=True
+                    )
+                else : 
+                    sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
+                        link_pos_query, get_gradient=True
+                    )
                 # sdf_vals: (batch*horizon*num_links,)
                 # sdf_gradient: (batch*horizon*num_links, dim)
                 # for larger gradient for moving object field
@@ -153,9 +157,15 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             return sdf_vals, sdf_gradient
         else:
             for df_time_varying in df_obj_list:
-                sdf_vals = df_time_varying.compute_signed_distance(
-                    link_pos_query, timesteps=timesteps_query, get_gradient=False
-                )
+                if isinstance(df_time_varying, MovingObjectField) : 
+                    scale = self.grad_scale 
+                    sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
+                        link_pos_query, timesteps=timesteps_query, get_gradient=False
+                    )
+                else : 
+                    sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
+                        link_pos_query, get_gradient=False
+                    )
                 # sdf_vals: (batch*horizon*num_links,)
 
                 # Reshape back

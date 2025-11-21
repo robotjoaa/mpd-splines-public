@@ -105,6 +105,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         self.reload_data = reload_data
         self.preload_data_to_device = preload_data_to_device
         self.load_data(n_task_samples=n_task_samples)
+
         # possibly move the dataset to the gpu
         if self.preload_data_to_device:
             self.fields = dict_to_device(self.fields, **self.tensor_args)
@@ -182,7 +183,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
             data_reload_prefix += f"-n_pts_{self.planning_task.parametric_trajectory.bspline.n_pts}"
             data_reload_prefix += f"-zero_vel_{self.planning_task.parametric_trajectory.zero_vel_at_start_and_goal}"
             data_reload_prefix += f"-zero_acc_{self.planning_task.parametric_trajectory.zero_acc_at_start_and_goal}"
-            data_reload_file_path = os.path.join(self.base_dir, f"{data_reload_prefix}.pickle")
+            data_reload_file_path = os.path.join(self.base_dir, f"{data_reload_prefix}.pickle") # tmp without statistics
 
             if os.path.exists(data_reload_file_path) and not self.reload_data:
                 # load the pre-processed dataset
@@ -291,6 +292,14 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
                 self.fields = self.build_fields_data_sample(
                     self.fields, torch.stack(q_start_all), torch.stack(q_goal_all), device="cpu"
                 )
+
+                # # Save data to disk to speed up loading the next time.
+                # data_to_save = {
+                #     "fields": self.fields,
+                #     "map_task_id_to_control_points_id": self.map_task_id_to_control_points_id,
+                #     "map_control_points_id_to_task_id": self.map_control_points_id_to_task_id,
+                # }
+                # pickle.dump(data_to_save, open(data_reload_file_path, "wb"))
 
                 # Compute collision free statistics of the fitted bspline (this can take a while).
                 percentage_free_trajs_l, percentage_collision_intensity_l = self.run_collision_statistics()

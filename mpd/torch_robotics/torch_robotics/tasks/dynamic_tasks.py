@@ -107,6 +107,8 @@ class DynPlanningTask(PlanningTask):
         
         # print("CollisionObjectDistanceFieldTimeVarying, cutoff_margin", obstacle_cutoff_margin*scale)
         # Time-varying collision field for objects
+        
+        # there should be no empty case
         self.df_collision_objects = CollisionObjectDistanceFieldTimeVarying(
             self.robot,
             df_time_varying_obj_fn=self.env.get_df_obj_list,
