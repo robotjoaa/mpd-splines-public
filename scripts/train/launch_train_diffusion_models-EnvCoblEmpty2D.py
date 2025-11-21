@@ -61,6 +61,7 @@ single_experiment_params_base_l = [
         context_ee_goal_pose_out_dim__=32,
         context_combined_out_dim__=32,
         bspline_num_control_points_desired__=16,
+        num_T_pts=80,
     ),
 ]
 
@@ -119,7 +120,7 @@ for single_experiment_params in single_experiment_params_l:
         use_ema=True,
         steps_til_summary=5_000,
         steps_til_ckpt=5_000,
-        device="cpu", # "cuda:0"
+        device="cuda:0",
         **wandb_options,
         debug=True,
     )

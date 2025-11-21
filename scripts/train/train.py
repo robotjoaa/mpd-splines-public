@@ -13,6 +13,7 @@ from mpd.trainer.trainer import get_num_epochs
 from mpd.utils.loaders import get_planning_task_and_dataset, get_model, get_loss, get_summary
 from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device
+import time
 
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
@@ -85,8 +86,8 @@ def experiment(
     debug: bool = DEBUG,
     ########################################################################
     # MANDATORY
-    # seed: int = int(time.time()),
-    seed: int = 1726484688,
+    seed: int = int(time.time()),
+    # seed: int = 1726484688,
     results_dir: str = "logs",
     ########################################################################
     # WandB
