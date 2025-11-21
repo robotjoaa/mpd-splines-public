@@ -391,7 +391,7 @@ if __name__ == "__main__":
     link_pos = torch.randn(shape_x, device=tensor_args["device"])
     for df in df_obj_list:
         # df : GridMapSDF or MovingObjectField
-        # print("CollisionObjectdistancefield", type(df))
+        print("CollisionObjectdistancefield", type(df))
         get_gradient = True
         if get_gradient:
             sdf_vals, sdf_gradient = df.compute_signed_distance(link_pos, get_gradient=get_gradient)

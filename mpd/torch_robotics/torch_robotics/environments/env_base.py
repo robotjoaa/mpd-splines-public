@@ -85,7 +85,7 @@ class EnvBase(ABC):
 
     def get_df_obj_list(self, return_extra_objects_only=False):
         df_obj_l = []
-        if not return_extra_objects_only:
+        if not return_extra_objects_only and self.obj_fixed_list :
             # fixed objects
             if self.grid_map_sdf_obj_fixed is not None:
                 df_obj_l.append(self.grid_map_sdf_obj_fixed)

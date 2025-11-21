@@ -138,6 +138,16 @@ class RobotPointMass2D(RobotBase):
 # alias for backward compatibility
 RobotPointMass = RobotPointMass2D
 
+class RobotPointMass2DBig(RobotPointMass2D) : 
+    def __init__(self, **kwargs):
+        super().__init__(
+            urdf_robot_file=os.path.join(get_robot_path(), "point_mass", "point_mass_robot_2d_big.urdf"),
+            collision_spheres_file_path=os.path.join(
+                get_configs_path(), "point_mass_robot_2d/point_mass_robot_2d_big_sphere_config.yaml"
+            ),
+            task_space_dim=2,
+            **kwargs,
+        )
 
 class RobotPointMass3D(RobotPointMass2D):
 

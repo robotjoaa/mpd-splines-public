@@ -126,8 +126,8 @@ class TrajectoryInterpolator:
     """
     Base class for trajectory interpolation methods.
     """
-
-    def __call__(self, t):
+    
+    def __call__(self, t, **kwargs):
         """
         Get position and orientation at time t.
 
@@ -357,3 +357,350 @@ class CircularTrajectory(TrajectoryInterpolator):
             ori = ori.squeeze(0)
 
         return pos, ori
+
+
+class WaypointTrajectory(TrajectoryInterpolator):
+    """
+    Trajectory interpolator specifically designed for COBL-style obstacle trajectories.
+
+    Handles time-based interpolation for 2D dynamic obstacles with position and velocity data.
+    Supports both single and batched queries for efficient collision detection.
+
+    Format:
+        - Input: List of obstacle trajectories, each [T, 6] containing [x, y, vx, vy, cos(θ), sin(θ)]
+        - Output: Interpolated states at query time(s)
+    """
+
+    def __init__(
+        self,
+        trajectories,
+        time_steps=None,
+        dt: float = 0.1,
+        horizon: int = 80,
+        tensor_args: dict = DEFAULT_TENSOR_ARGS
+    ):
+        """
+        Initialize obstacle trajectory interpolator.
+
+        Args:
+            trajectories: Obstacle trajectories in one of these formats:
+                - List[np.ndarray]: List of N obstacles, each [T, 6]
+                - torch.Tensor: Single trajectory [T, 6] or batched [N, T, 6]
+                - np.ndarray: Single trajectory [T, 6] or batched [N, T, 6]
+            time_steps: Optional time values for each waypoint [T]
+                       If None, uses uniform spacing: [0, dt, 2*dt, ..., (T-1)*dt]
+            dt: Time step between waypoints (default: 0.1s)
+            horizon: Number of waypoints per trajectory (default: 80)
+            tensor_args: Tensor device and dtype
+        """
+        self.tensor_args = tensor_args
+        self.dt = dt
+        self.horizon = horizon
+
+        # Convert trajectories to list of tensors format
+        if isinstance(trajectories, list):
+            # List of arrays [T, 6]
+            self.trajectories = [to_torch(traj, **tensor_args) for traj in trajectories]
+            self.n_obstacles = len(trajectories)
+        elif isinstance(trajectories, (torch.Tensor, np.ndarray)):
+            traj_tensor = to_torch(trajectories, **tensor_args)
+            if traj_tensor.ndim == 2:
+                # Single trajectory [T, 6]
+                self.trajectories = [traj_tensor]
+                self.n_obstacles = 1
+            elif traj_tensor.ndim == 3:
+                # Batched trajectories [N, T, 6]
+                self.trajectories = [traj_tensor[i] for i in range(traj_tensor.shape[0])]
+                self.n_obstacles = traj_tensor.shape[0]
+            else:
+                raise ValueError(f"Invalid trajectory shape: {traj_tensor.shape}")
+        else:
+            raise TypeError(f"Unsupported trajectory type: {type(trajectories)}")
+
+        # Set up time steps
+        if time_steps is not None:
+            self.time_steps = to_torch(time_steps, **tensor_args)
+        else:
+            # Create uniform time steps
+            T = self.trajectories[0].shape[0]
+            self.time_steps = torch.arange(T, **tensor_args) * dt
+
+        # Store min/max time for clamping
+        self.t_min = self.time_steps[0]
+        self.t_max = self.time_steps[-1]
+
+    def __call__(self, t, obstacle_indices=None, clamp=True):
+        """
+        Query obstacle states at time t with linear interpolation.
+
+        Args:
+            t: Query time(s), scalar or tensor [batch_t]
+            obstacle_indices: Optional list/tensor of obstacle indices to query
+                            If None, queries all obstacles
+            clamp: If True, clamps time to valid range [t_min, t_max]
+                  If False, extrapolates linearly beyond range
+
+        Returns:
+            states: Dictionary containing:
+                - 'positions': [batch_t, N, 2] or [N, 2] if t is scalar
+                - 'velocities': [batch_t, N, 2] or [N, 2] if t is scalar
+                - 'orientations': [batch_t, N, 2] or [N, 2] if t is scalar (cos, sin)
+                where N is number of queried obstacles
+        """
+        # Convert t to tensor
+        if not isinstance(t, torch.Tensor):
+            t = torch.tensor(t, **self.tensor_args)
+
+        is_scalar_t = t.ndim == 0
+        if is_scalar_t:
+            t = t.unsqueeze(0)  # [1]
+
+        # Clamp or allow extrapolation
+        if clamp:
+            t = torch.clamp(t, self.t_min, self.t_max)
+
+        # Determine which obstacles to query
+        if obstacle_indices is None:
+            obs_indices = list(range(self.n_obstacles))
+        else:
+            if isinstance(obstacle_indices, int):
+                obs_indices = [obstacle_indices]
+            else:
+                obs_indices = obstacle_indices
+
+        n_query_obs = len(obs_indices)
+        batch_t = t.shape[0]
+
+        # Initialize output tensors
+        positions = torch.zeros(batch_t, n_query_obs, 2, **self.tensor_args)
+        velocities = torch.zeros(batch_t, n_query_obs, 2, **self.tensor_args)
+        orientations = torch.zeros(batch_t, n_query_obs, 2, **self.tensor_args)
+
+        # Interpolate each obstacle
+        for i, obs_idx in enumerate(obs_indices):
+            traj = self.trajectories[obs_idx]  # [T, 6]
+
+            # Find bounding time indices for interpolation
+            idx_high = torch.searchsorted(self.time_steps, t, right=False)
+            idx_high = idx_high.clamp(1, len(self.time_steps) - 1)
+            idx_low = idx_high - 1
+
+            # Get bounding states
+            t_low = self.time_steps[idx_low]  # [batch_t]
+            t_high = self.time_steps[idx_high]  # [batch_t]
+
+            states_low = traj[idx_low]  # [batch_t, 6]
+            states_high = traj[idx_high]  # [batch_t, 6]
+
+            # Compute interpolation weight
+            alpha = ((t - t_low) / (t_high - t_low + 1e-8)).clamp(0, 1)  # [batch_t]
+            alpha = alpha.unsqueeze(-1)  # [batch_t, 1]
+
+            # Linear interpolation
+            states_interp = (1 - alpha) * states_low + alpha * states_high  # [batch_t, 6]
+
+            # Extract components
+            positions[:, i, :] = states_interp[:, 0:2]  # [x, y]
+            velocities[:, i, :] = states_interp[:, 2:4]  # [vx, vy]
+            orientations[:, i, :] = states_interp[:, 4:6]  # [cos(θ), sin(θ)]
+
+        # Squeeze if input was scalar time
+        if is_scalar_t:
+            positions = positions.squeeze(0)  # [N, 2]
+            velocities = velocities.squeeze(0)  # [N, 2]
+            orientations = orientations.squeeze(0)  # [N, 2]
+
+        return {
+            'positions': positions,
+            'velocities': velocities,
+            'orientations': orientations
+        }
+
+    def get_start_position(self):
+        """
+        Get starting position of trajectory.
+
+        Returns:
+            pos: Starting position, shape (3,)
+        """
+        return self.trajectories[0]
+
+    def get_positions(self, t, obstacle_indices=None, clamp=True):
+        """
+        Convenience method to get only positions.
+
+        Args:
+            t: Query time(s)
+            obstacle_indices: Optional obstacle indices to query
+            clamp: Whether to clamp time to valid range
+
+        Returns:
+            positions: [batch_t, N, 2] or [N, 2] if t is scalar
+        """
+        return self(t, obstacle_indices, clamp)['positions']
+
+    def get_velocities(self, t, obstacle_indices=None, clamp=True):
+        """
+        Convenience method to get only velocities.
+
+        Args:
+            t: Query time(s)
+            obstacle_indices: Optional obstacle indices to query
+            clamp: Whether to clamp time to valid range
+
+        Returns:
+            velocities: [batch_t, N, 2] or [N, 2] if t is scalar
+        """
+        return self(t, obstacle_indices, clamp)['velocities']
+
+    def get_orientations(self, t, obstacle_indices=None, clamp=True):
+        """
+        Convenience method to get only orientations.
+
+        Args:
+            t: Query time(s)
+            obstacle_indices: Optional obstacle indices to query
+            clamp: Whether to clamp time to valid range
+
+        Returns:
+            orientations: [batch_t, N, 2] or [N, 2] if t is scalar (cos, sin)
+        """
+        return self(t, obstacle_indices, clamp)['orientations']
+
+    def __len__(self):
+        """Return number of obstacles."""
+        return self.n_obstacles
+
+    def __repr__(self):
+        return (f"WaypointTrajectoryInterpolator(n_obstacles={self.n_obstacles}, "
+                f"horizon={self.horizon}, dt={self.dt}, "
+                f"time_range=[{self.t_min:.2f}, {self.t_max:.2f}])")
+
+
+if __name__ == '__main__':
+    """Test WaypointTrajectoryInterpolator with COBL-style data."""
+    print("=" * 80)
+    print("TESTING WaypointTrajectoryInterpolator")
+    print("=" * 80)
+
+    # Create synthetic obstacle trajectories (COBL format: [x, y, vx, vy, cos(θ), sin(θ)])
+    dt = 0.1
+    horizon = 80
+    n_obstacles = 3
+
+    print(f"\nCreating {n_obstacles} synthetic obstacle trajectories...")
+    print(f"  Horizon: {horizon} waypoints")
+    print(f"  dt: {dt}s")
+    print(f"  Total time: {(horizon-1)*dt}s")
+
+    trajectories = []
+    for i in range(n_obstacles):
+        # Create circular motion
+        t = np.linspace(0, (horizon-1)*dt, horizon)
+        radius = 0.5 + i * 0.2
+        omega = 0.5 * (i + 1)
+
+        x = radius * np.cos(omega * t)
+        y = radius * np.sin(omega * t)
+        vx = -radius * omega * np.sin(omega * t)
+        vy = radius * omega * np.cos(omega * t)
+
+        # Orientation aligned with velocity
+        theta = np.arctan2(vy, vx)
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+
+        traj = np.stack([x, y, vx, vy, cos_theta, sin_theta], axis=1)  # [80, 6]
+        trajectories.append(traj)
+
+    # Test 1: Initialize with list of arrays
+    print("\n" + "-" * 80)
+    print("Test 1: Initialize with list of arrays")
+    print("-" * 80)
+
+    interp = WaypointTrajectory(trajectories, dt=dt, horizon=horizon)
+    print(f"  {interp}")
+
+    # Test 2: Query at specific time
+    print("\n" + "-" * 80)
+    print("Test 2: Query single time")
+    print("-" * 80)
+
+    t_query = 3.5
+    states = interp(t_query)
+
+    print(f"\n  Query time: {t_query}s")
+    print(f"  Positions shape: {states['positions'].shape}")
+    print(f"  Positions:\n{states['positions'].numpy()}")
+    print(f"  Velocities:\n{states['velocities'].numpy()}")
+
+    # Test 3: Query multiple times (batched)
+    print("\n" + "-" * 80)
+    print("Test 3: Query multiple times (batched)")
+    print("-" * 80)
+
+    t_batch = torch.tensor([0.0, 2.0, 4.0, 6.0])
+    states_batch = interp(t_batch)
+
+    print(f"\n  Query times: {t_batch.numpy()}")
+    print(f"  Positions shape: {states_batch['positions'].shape}")
+    print(f"  First obstacle positions at queried times:")
+    print(f"{states_batch['positions'][:, 0, :].numpy()}")
+
+    # Test 4: Query specific obstacles
+    print("\n" + "-" * 80)
+    print("Test 4: Query specific obstacles")
+    print("-" * 80)
+
+    obs_indices = [0, 2]  # Query only obstacles 0 and 2
+    states_subset = interp(t_query, obstacle_indices=obs_indices)
+
+    print(f"\n  Query time: {t_query}s")
+    print(f"  Obstacle indices: {obs_indices}")
+    print(f"  Positions shape: {states_subset['positions'].shape}")
+    print(f"  Positions:\n{states_subset['positions'].numpy()}")
+
+    # Test 5: Convenience methods
+    print("\n" + "-" * 80)
+    print("Test 5: Convenience methods")
+    print("-" * 80)
+
+    positions = interp.get_positions(t_query)
+    velocities = interp.get_velocities(t_query)
+
+    print(f"\n  get_positions({t_query}s) shape: {positions.shape}")
+    print(f"  get_velocities({t_query}s) shape: {velocities.shape}")
+
+    # Test 6: Time clamping
+    print("\n" + "-" * 80)
+    print("Test 6: Time clamping")
+    print("-" * 80)
+
+    t_out_of_bounds = 100.0  # Way beyond horizon
+    states_clamped = interp(t_out_of_bounds, clamp=True)
+
+    print(f"\n  Query time: {t_out_of_bounds}s (beyond horizon)")
+    print(f"  Valid time range: [{interp.t_min:.2f}, {interp.t_max:.2f}]")
+    print(f"  With clamping - positions:\n{states_clamped['positions'].numpy()}")
+
+    # Test 7: Initialize with tensor (batched format)
+    print("\n" + "-" * 80)
+    print("Test 7: Initialize with batched tensor")
+    print("-" * 80)
+
+    traj_tensor = np.stack(trajectories, axis=0)  # [3, 80, 6]
+    interp_tensor = WaypointTrajectory(traj_tensor, dt=dt, horizon=horizon)
+
+    print(f"  Input shape: {traj_tensor.shape}")
+    print(f"  {interp_tensor}")
+
+    states_tensor = interp_tensor(t_query)
+    print(f"  Query result shape: {states_tensor['positions'].shape}")
+
+    # Verify results match
+    diff = torch.abs(states['positions'] - states_tensor['positions']).max()
+    print(f"  Max difference from list version: {diff.item():.2e}")
+
+    print("\n" + "=" * 80)
+    print("ALL TESTS PASSED")
+    print("=" * 80)

@@ -28,7 +28,8 @@ from .moving_primitives import (
 from .trajectory import (
     TrajectoryInterpolator,
     LinearTrajectory,
-    CircularTrajectory
+    CircularTrajectory,
+    WaypointTrajectory,
 )
 
 __all__ = [
@@ -47,7 +48,7 @@ __all__ = [
     'TrajectoryInterpolator',
     'LinearTrajectory',
     'CircularTrajectory',
-
+    'WaypointTrajectory',
     # Moving primitives
     'MovingObjectField',
     'create_moving_objects_from_trajectories',

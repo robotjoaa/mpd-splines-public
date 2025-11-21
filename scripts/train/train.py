@@ -13,6 +13,7 @@ from mpd.utils.loaders import get_planning_task_and_dataset, get_model, get_loss
 from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device
 import wandb
+import time
 
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
@@ -85,8 +86,8 @@ def experiment(
     debug: bool = DEBUG,
     ########################################################################
     # MANDATORY
-    # seed: int = int(time.time()),
-    seed: int = 1726484688,
+    seed: int = int(time.time()),
+    # seed: int = 1726484688,
     results_dir: str = "logs",
     ########################################################################
     # WandB
@@ -132,13 +133,15 @@ def experiment(
     full_dataset = train_subset.dataset
 
     if debug:
-        full_dataset.render(
+        fig1, ax1, fig2, ax2 = full_dataset.render(
             task_id=0,
             render_joint_trajectories=True,
             render_robot_trajectories=True if full_dataset.planning_task.env.dim == 2 else False,
-            render_n_robot_trajectories=50,
+            # render_n_robot_trajectories=50,
         )
-        plt.show()
+        fig1.savefig(os.path.join(results_dir, f"joint.png"))
+        fig2.savefig(os.path.join(results_dir, f"robot.png"))
+        #plt.show()
 
     ########################################################################
     # Model
