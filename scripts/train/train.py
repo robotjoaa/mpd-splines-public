@@ -1,7 +1,6 @@
-import isaacgym
+#import isaacgym
 
 import os
-
 import torch
 from matplotlib import pyplot as plt
 
@@ -13,14 +12,15 @@ from mpd.trainer.trainer import get_num_epochs
 from mpd.utils.loaders import get_planning_task_and_dataset, get_model, get_loss, get_summary
 from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device
+import wandb
 
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
-os.environ["WANDB_API_KEY"] = "999"
-WANDB_MODE = "disabled"
+os.environ["WANDB_API_KEY"] = "947955d5becc706e9ab246bec4867a259c529ec1"
+WANDB_MODE = "online"
 WANDB_ENTITY = "mpd-splines"
-DEBUG = True
+DEBUG = False
 
 
 @single_experiment_yaml
@@ -100,6 +100,8 @@ def experiment(
     print(f"{dataset_subdir} -- {parametric_trajectory_class}")
     print("-" * 100)
     print()
+
+    #wandb.init(project=wandb_project)
 
     # Set random seed for reproducibility
     fix_random_seed(seed)

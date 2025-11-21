@@ -57,7 +57,8 @@ class GaussianDiffusionModel(nn.Module, ABC):
     ):
         super().__init__()
 
-        self.model = MyDataParallel(denoise_fn)
+        #self.model = MyDataParallel(denoise_fn)
+        self.model = denoise_fn
 
         self.context_model = context_model
 

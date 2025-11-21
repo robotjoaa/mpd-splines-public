@@ -32,32 +32,32 @@ conda activate ${CONDA_ENV_NAME}
 
 echo "-------> Installing dependencies"
 cd "${DEPS_DIR}"/experiment_launcher && pip install -e .
-cd "${DEPS_DIR}"/isaacgym/python && pip install -e .
+# cd "${DEPS_DIR}"/isaacgym/python && pip install -e .
 cd "${DEPS_DIR}"/theseus/torchkin && pip install -e .
 cd "${THIS_DIR}"/mpd/torch_robotics && pip install -e .
 cd "${THIS_DIR}"/mpd/motion_planning_baselines && pip install -e .
 
 echo "-------> Installing pybullet_ompl"
 conda activate ${CONDA_ENV_NAME}
-cd "${DEPS_DIR}"/pybullet_ompl || exit 1
-git clone git@github.com:ompl/ompl.git
-cd ompl || exit 1
-git checkout fca10b4bd4840856c7a9f50d1ee2688ba77e25aa
-mkdir -p build/Release
-cd build/Release || exit 1
-# cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON ../.. -DPYTHON_EXEC=${HOME}/miniconda3/envs/${CONDA_ENV_NAME}/bin/python
-cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON ../.. -DPYTHON_EXEC=${HOME}/anaconda3/envs/${CONDA_ENV_NAME}/bin/python
-# cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON \
-#       -DPYTHON_EXEC=${HOME}/anaconda3/envs/${CONDA_ENV_NAME}/bin/python \
-#       -DFLANN_INCLUDE_DIR=/usr/include \
-#       -DFLANN_LIBRARY=/usr/lib/x86_64-linux-gnu/libflann.so \
-#       ../..
-make -j 8 update_bindings  # This step takes a lot of time.
-for _ in {1..5}; do make -j 8; done  # run multiple times to avoid errors
+# cd "${DEPS_DIR}"/pybullet_ompl || exit 1
+# git clone git@github.com:ompl/ompl.git
+# cd ompl || exit 1
+# git checkout fca10b4bd4840856c7a9f50d1ee2688ba77e25aa
+# mkdir -p build/Release
+# cd build/Release || exit 1
+# # cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON ../.. -DPYTHON_EXEC=${HOME}/miniconda3/envs/${CONDA_ENV_NAME}/bin/python
+# cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON ../.. -DPYTHON_EXEC=${HOME}/anaconda3/envs/${CONDA_ENV_NAME}/bin/python
+# # cmake -DCMAKE_DISABLE_FIND_PACKAGE_pypy=ON \
+# #       -DPYTHON_EXEC=${HOME}/anaconda3/envs/${CONDA_ENV_NAME}/bin/python \
+# #       -DFLANN_INCLUDE_DIR=/usr/include \
+# #       -DFLANN_LIBRARY=/usr/lib/x86_64-linux-gnu/libflann.so \
+# #       ../..
+# make -j 8 update_bindings  # This step takes a lot of time.
+# for _ in {1..5}; do make -j 8; done  # run multiple times to avoid errors
 cd ${DEPS_DIR}/pybullet_ompl && pip install -e .
 
 # Other necessary installs
-pip install numpy --upgrade
+#pip install numpy --upgrade
 pip install networkx --upgrade
 
 # ncurses is causing an error using the linux command watch, htop, ...

@@ -2,7 +2,7 @@ from typing import Tuple
 
 from matplotlib import pyplot as plt
 
-import isaacgym
+# import isaacgym
 from functools import partial
 
 import einops

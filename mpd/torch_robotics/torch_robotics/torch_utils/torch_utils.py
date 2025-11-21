@@ -20,7 +20,9 @@ DEFAULT_TENSOR_ARGS = {"device": get_torch_device("cuda"), "dtype": torch.float3
 
 
 def dict_to_device(ob, device, **kwargs):
-    if isinstance(ob, collections.Mapping):
+    # python 3.10
+    from collections.abc import Mapping
+    if isinstance(ob, Mapping):
         return {k: dict_to_device(v, device) for k, v in ob.items()}
     else:
         return ob.to(device)
