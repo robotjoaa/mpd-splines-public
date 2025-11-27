@@ -8,6 +8,7 @@ from matplotlib import pyplot as plt
 from experiment_launcher import single_experiment_yaml, run_experiment
 from mpd import trainer
 from mpd.models import UNET_DIM_MULTS, TemporalUnet
+from mpd.models.diffusion_models.comp_diffuser.stgl_sml_temporal_cond_v2 import Unet1D_TjTi_Stgl_Cond_V2
 from mpd.models.diffusion_models.context_models import ContextModelQs, ContextModelEEPoseGoal, ContextModelCombined
 from mpd.trainer.trainer import get_num_epochs
 from mpd.utils.loaders import get_planning_task_and_dataset, get_model, get_loss, get_summary
@@ -178,28 +179,77 @@ def experiment(
         cvae_latent_dim=cvae_latent_dim,
     )
 
-    unet_configs = dict(
-        state_dim=full_dataset.state_dim,
-        n_support_points=full_dataset.n_learnable_control_points,
-        unet_input_dim=unet_input_dim,
-        dim_mults=UNET_DIM_MULTS[unet_dim_mults_option],
-        conditioning_type=conditioning_type if context_model is not None else "None",
-        conditioning_embed_dim=context_model.out_dim if context_model is not None else None,
-    )
+    if generative_model_class == "CompDiffusionModel" : 
+        ovlp_config=dict(
+            in_dim=full_dataset.state_dim,
+            hidden_dim=32,
+            conv_dim=32,
+            out_dim=64,
+            conv_kernel=3,
+            pool="mean",
+            use_time_emb=True,
+            time_emb_dim=16, 
+        )
+        network_config = dict(
+            resblock_ksize=5, # fixed
+            st_ovlp_model_config=ovlp_config,
+            end_ovlp_model_config=ovlp_config,
+            ovlp_model_type='unet', # fixed
+            inpaint_token_dim=16,
+            inpaint_token_type='const', # fixed
+            res_block_type="ResidualTemporalBlock"
+        )
 
-    model = get_model(
-        model_class=generative_model_class,
-        denoise_fn=TemporalUnet(**unet_configs),
-        context_model=context_model,
-        tensor_args=tensor_args,
-        **cvae_configs,
-        **diffusion_configs,
-        **unet_configs,
-    )
+        unet_configs = dict(
+            state_dim=full_dataset.state_dim,
+            n_support_points=full_dataset.n_learnable_control_points,
+            unet_input_dim=unet_input_dim,
+            dim_mults=UNET_DIM_MULTS[unet_dim_mults_option],
+            network_config=network_config,
+        )
+
+        comp_configs = dict(
+            guide_mode = 'default', 
+            len_ovlp_cd = kwargs.get('len_ovlap', 4),
+            condition_guidance_w = 2.0, # fixed
+            tr_inpat_prob = 0.5,
+            tr_ovlp_prob = 0.5,
+            tr_1side_drop_prob = 0.20,
+            train_st_only = False, 
+        )
+
+        model = get_model(
+            model_class=generative_model_class,
+            denoise_fn=Unet1D_TjTi_Stgl_Cond_V2(context_model = context_model, **unet_configs),
+            horizon = full_dataset.n_learnable_control_points,
+            comp_config=comp_configs,
+            tensor_args=tensor_args,
+            **diffusion_configs,
+            **unet_configs,
+        )
+    else : 
+        unet_configs = dict(
+            state_dim=full_dataset.state_dim,
+            n_support_points=full_dataset.n_learnable_control_points,
+            unet_input_dim=unet_input_dim,
+            dim_mults=UNET_DIM_MULTS[unet_dim_mults_option],
+            conditioning_type=conditioning_type if context_model is not None else "None",
+            conditioning_embed_dim=context_model.out_dim if context_model is not None else None,
+        )
+
+        model = get_model(
+            model_class=generative_model_class,
+            denoise_fn=TemporalUnet(**unet_configs),
+            context_model=context_model,
+            tensor_args=tensor_args,
+            **cvae_configs,
+            **diffusion_configs,
+            **unet_configs,
+        )
 
     ########################################################################
     # Loss
-    if generative_model_class == "GaussianDiffusionModel":
+    if generative_model_class in ["GaussianDiffusionModel", "CompDiffusionModel"]:
         loss_class = "GaussianDiffusionLoss"
     elif generative_model_class == "CVAEModel":
         loss_class = "CVAELoss"
