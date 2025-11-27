@@ -25,6 +25,12 @@ from torch_robotics.torch_utils.torch_utils import (
 )
 from torch_robotics.trajectory.metrics import compute_smoothness, compute_ee_pose_errors, compute_path_length
 from torch_robotics.tasks import DynPlanningTask
+
+from torch_robotics.environments import (
+    EnvDynSimple2DExtraObjects,
+    EnvCobl2D
+)
+
 from torch_robotics.environments.dynamic_extension import (
     LinearTrajectory
 )
@@ -466,15 +472,18 @@ class GenerativeOptimizationPlanner:
         if kwargs['map_config'] is not None:
             # create moving object from the config
             trajectory_configs=  {}
-            # convert to tensor 
-            for k, v in kwargs['map_config'].items() : 
-                tmp_traj = LinearTrajectory(
-                    keyframe_times = v['keyframe_times'],
-                    keyframe_positions = v['keyframe_positions'],
-                    tensor_args = self.tensor_args
-                )
-                trajectory_configs[k] = tmp_traj
-            
+            if isinstance(self.planning_task.env, EnvCobl2D) : 
+                trajectory_configs = { 'scenario_idx' :kwargs['map_config'].get('scenario_idx')}
+            elif isinstance(self.planning_task.env, EnvDynSimple2DExtraObjects) :
+                # convert to tensor 
+                for k, v in kwargs['map_config'].items() : 
+                    tmp_traj = LinearTrajectory(
+                        keyframe_times = v['keyframe_times'],
+                        keyframe_positions = v['keyframe_positions'],
+                        tensor_args = self.tensor_args
+                    )
+                    trajectory_configs[k] = tmp_traj
+                
             self.planning_task.env.update_all_moving_object_trajectories(trajectory_configs)
             results_ns.update(
                 dyn_obj_config= kwargs['map_config']

@@ -69,6 +69,7 @@ class EnvCobl2D(EnvDynBase):
             **kwargs: Additional arguments
         """
         # Load obstacle data
+        self.eval_data = None
         if obstacle_trajectories is None:
             if eval_dataset_path is None:
                 eval_dataset_path = os.path.join(DATASET_BASE_DIR, 'EnvCoblEmpty2D-RobotPointMass2DBig/eval_dataset.pkl')
@@ -78,12 +79,16 @@ class EnvCobl2D(EnvDynBase):
             import pickle
             with open(eval_dataset_path, 'rb') as f:
                 eval_data = pickle.load(f)
+            self.eval_data = eval_data
 
             if scenario_idx >= len(eval_data['obstacle_trajectories']):
                 raise ValueError(f"Scenario {scenario_idx} not found. Dataset has {len(eval_data['obstacle_trajectories'])} scenarios")
 
             self.obstacle_trajectories = eval_data['obstacle_trajectories'][scenario_idx]
             self.ego_trajectory = eval_data['ego_trajectories'][scenario_idx]  # [80, 2]
+            self.scale_factor = eval_data['scale_factor']
+            print(f"{scenario_idx=}, {len(self.obstacle_trajectories)=}, {self.scale_factor=}")
+            
         else:
             self.obstacle_trajectories = obstacle_trajectories
             self.ego_trajectory = None
@@ -119,13 +124,13 @@ class EnvCobl2D(EnvDynBase):
                 ),
                 tensor_args=tensor_args,
             )
-            traj_sphere = WaypointTrajectory(self.obstacle_trajectories, dt = self.dt, horizon = self.horizon)
+            traj_sphere = WaypointTrajectory(obs_traj, dt = self.dt, horizon = self.horizon)
 
             # Create moving sphere
             moving_sphere = MovingObjectField(
                 primitive_fields=[prim_sphere],
                 trajectory=traj_sphere,
-                name=f"dyn-cobl2d-sphere-{i}"
+                name=f"dyn-cobl2d-sphere-{self.scenario_idx}-{i}"
             )
 
             obj_extra_list.append(moving_sphere)
@@ -165,6 +170,41 @@ class EnvCobl2D(EnvDynBase):
             positions.append(pos)
 
         return to_torch(np.array(positions), **self.tensor_args)
+    
+    def update_all_moving_object_trajectories(self, trajectory_configs):
+        # change scenario id 
+        self.scenario_idx = trajectory_configs.get('scenario_idx', 0)
+        self.obstacle_trajectories = self.eval_data['obstacle_trajectories'][self.scenario_idx]
+        self.ego_trajectory = self.eval_data['ego_trajectories'][self.scenario_idx]  # [80, 2]
+
+        # update object field
+        new_obj_extra = []  # Moving obstacles go here
+
+        for i, obs_traj in enumerate(self.obstacle_trajectories):
+            # obs_traj: [T, 6] with [x, y, vx, vy, cos(θ), sin(θ)]
+            positions = obs_traj[:, :2]  # [T, 2]
+            prim_sphere= MultiSphereField(
+                np.array(
+                    [positions[0]]
+                ),
+                np.array(
+                    [self.obstacle_radius]
+                ),
+                tensor_args=self.tensor_args,
+            )
+            traj_sphere = WaypointTrajectory(obs_traj, dt = self.dt, horizon = self.horizon)
+
+            # Create moving sphere
+            moving_sphere = MovingObjectField(
+                primitive_fields=[prim_sphere],
+                trajectory=traj_sphere,
+                name=f"dyn-cobl2d-sphere-{self.scenario_idx}-{i}"
+            )
+
+            new_obj_extra.append(moving_sphere)
+        self.set_obj_extra_list(new_obj_extra)
+        self.n_obstacles = len(self.obstacle_trajectories)
+        print(f"Updated Scenario {self.scenario_idx=}, {self.n_obstacles=}")
 
     def render(self, ax=None, time: Optional[float] = None, **kwargs):
         """
@@ -188,6 +228,12 @@ class EnvCobl2D(EnvDynBase):
         ax.set_ylim(y_min, y_max)
         ax.set_aspect('equal')
 
+        # # only show it in 
+        # xticks = ax.get_xticks()
+        # ax.set_xticklabels([f"{t*10:g}" for t in xticks])
+        # yticks = ax.get_yticks()
+        # ax.set_yticklabels([f"{t*10:g}" for t in yticks])
+
         # Render obstacles at current time
         t_idx = min(int(time / self.dt), self.horizon - 1)
 
@@ -210,9 +256,10 @@ class EnvCobl2D(EnvDynBase):
             if np.linalg.norm(vel) > 0.01:
                 ax.arrow(
                     pos[0], pos[1],
-                    vel[0] * 0.3, vel[1] * 0.3,
-                    head_width=0.15,
-                    head_length=0.2,
+                    vel[0], vel[1],
+                    head_width=0.05,
+                    head_length=0.05,
+                    length_includes_head=True,
                     fc='purple',
                     ec='purple',
                     alpha=0.5,

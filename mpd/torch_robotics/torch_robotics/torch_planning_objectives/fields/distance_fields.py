@@ -219,6 +219,7 @@ class CollisionObjectBase(EmbodimentDistanceFieldBase):
         collisions = signed_distances <= margin
         # reduce over points (dim -1) and over objects (dim -2)
         any_collision = torch.any(torch.any(collisions, dim=-1), dim=-1)
+        #print(f"{any_collision=}")
         return any_collision
 
     @abstractmethod
