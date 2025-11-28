@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from abc import ABC
+import pdb
 
 # from mpd.models.diffusion_models.diffusion_model_base import GaussianDiffusionModel
 from mpd.models.diffusion_models.helpers import (
@@ -58,6 +59,7 @@ class CompDiffusionModel(nn.Module, ABC):
         loss_type="l2",
         # context_model=None,
         horizon=None,
+        len_ovlp_cd=None,
         comp_config={},
         **kwargs,
     ):
@@ -73,7 +75,7 @@ class CompDiffusionModel(nn.Module, ABC):
         self.state_dim = self.model.state_dim
 
         self.horizon = horizon # sm_horizon
-
+        self.len_ovlp_cd = len_ovlp_cd 
         if variance_schedule == "cosine":
             betas = cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999)
         elif variance_schedule == "exponential":
@@ -693,7 +695,8 @@ class CompDiffusionModel(nn.Module, ABC):
         # pdb.set_trace() ## check x dim
         t_1d = torch.randint(0, self.n_diffusion_steps, (batch_size, 1), device=x_clean.device).long()
         ## B,H
-        t_2d = torch.repeat_interleave(t_1d, repeats=self.horizon, dim=1)
+        t_2d = t_1d.expand(-1, self.horizon)
+        #t_2d = torch.repeat_interleave(t_1d, repeats=self.horizon, dim=1)
 
         noise = torch.randn_like(x_clean)
         x_noisy = self.q_sample(x_start=x_clean, t_2d=t_2d, noise=noise)
@@ -785,10 +788,15 @@ class CompDiffusionModel(nn.Module, ABC):
         ###### We need to modify the corresponding samples for inpainting
         # pdb.set_trace() ## check cond_st_gl --> 0: (B,2), horizon-1:(B,2)
 
-        cond_st = { 0: hard_conds[0][st_cd_use_inpat] }
+        cond_st = self.split_hard_conds(hard_conds, is_start=True)
+        for k,v in cond_st.items() : 
+            cond_st[k] = v[st_cd_use_inpat]
         x_noisy[ st_cd_use_inpat ] = apply_hard_conditioning( x_noisy[ st_cd_use_inpat ], cond_st)
         ####
-        cond_end = {self.horizon-1: hard_conds[self.horizon-1][end_cd_use_inpat]}
+        cond_end = self.split_hard_conds(hard_conds, is_start=False)
+        # {self.horizon-1: hard_conds[self.horizon-1][end_cd_use_inpat]}
+        for k,v in cond_end.items() : 
+            cond_end[k] = v[end_cd_use_inpat]
         x_noisy[ end_cd_use_inpat ] = apply_hard_conditioning( x_noisy[ end_cd_use_inpat ], cond_end)
 
         # pdb.set_trace() #### check if replace properly
@@ -810,10 +818,10 @@ class CompDiffusionModel(nn.Module, ABC):
 
 
         ## TODO: slow, can be improved
-        t_2d_st = torch.repeat_interleave(t_1d_st[:, None], repeats=self.len_ovlp_cd, dim=1)
-
-
-        t_2d_end = torch.repeat_interleave(t_1d_end[:, None], repeats=self.len_ovlp_cd, dim=1)
+        # t_2d_st = torch.repeat_interleave(t_1d_st[:, None], repeats=self.len_ovlp_cd, dim=1)
+        # t_2d_end = torch.repeat_interleave(t_1d_end[:, None], repeats=self.len_ovlp_cd, dim=1)
+        t_2d_st = t_1d_st.unsqueeze(1).expand(-1, self.len_ovlp_cd)   # (B, H)
+        t_2d_end = t_1d_end.unsqueeze(1).expand(-1, self.len_ovlp_cd) 
         # pdb.set_trace()
 
         ## add noise
@@ -899,7 +907,7 @@ class CompDiffusionModel(nn.Module, ABC):
             # st_is_drop =  np.zeros(shape=(batch_size,), dtype=bool) ## no drop
             st_is_drop = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device) ## no drop
 
-            assert 0 not in hard_conds.keys()
+            # assert 0 not in hard_conds.keys()
             # batch_size = st_traj.shape[0]
         
         ## start conditioning
@@ -958,8 +966,10 @@ class CompDiffusionModel(nn.Module, ABC):
         t_1d_end = torch.clamp(t_1d_end, min=0, max=self.n_diffusion_steps-1)
 
 
-        t_2d_st = torch.repeat_interleave(t_1d_st[:, None], repeats=self.len_ovlp_cd, dim=1)
-        t_2d_end = torch.repeat_interleave(t_1d_end[:, None], repeats=self.len_ovlp_cd, dim=1)
+        # t_2d_st = torch.repeat_interleave(t_1d_st[:, None], repeats=self.len_ovlp_cd, dim=1)
+        # t_2d_end = torch.repeat_interleave(t_1d_end[:, None], repeats=self.len_ovlp_cd, dim=1)
+        t_2d_st = t_1d_st.unsqueeze(1).expand(-1, self.len_ovlp_cd)
+        t_2d_end = t_1d_end.unsqueeze(1).expand(-1, self.len_ovlp_cd)
         
         ### -------
         if st_traj == None:

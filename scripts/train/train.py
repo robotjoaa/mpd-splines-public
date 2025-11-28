@@ -222,6 +222,7 @@ def experiment(
             model_class=generative_model_class,
             denoise_fn=Unet1D_TjTi_Stgl_Cond_V2(context_model = context_model, **unet_configs),
             horizon = full_dataset.n_learnable_control_points,
+            len_ovlp_cd = kwargs.get('len_ovlap', 4),
             comp_config=comp_configs,
             tensor_args=tensor_args,
             **diffusion_configs,

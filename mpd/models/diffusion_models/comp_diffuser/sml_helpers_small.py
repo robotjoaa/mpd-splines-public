@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Literal, Optional
 
+from mpd.models.layers import TimeEncoder
 
 class SmallOverlapEncoder(nn.Module):
     """
@@ -30,17 +31,18 @@ class SmallOverlapEncoder(nn.Module):
         time_emb_dim: int = 32,
     ) -> None:
         super().__init__()
-
+        self.out_dim = out_dim
         self.use_time_emb = use_time_emb
         if use_time_emb:
             # Simple sinusoidal positional encoding; no learnable params.
             self.register_buffer("pos_indices", None, persistent=False)
-            self.time_mlp = nn.Sequential(
-                SinusoidalPosEmb(time_emb_dim),
-                nn.Linear(time_emb_dim, time_emb_dim),
-                nn.Mish(),
-                nn.Linear(time_emb_dim, time_emb_dim),
-            )
+            # self.time_mlp = nn.Sequential(
+            #     SinusoidalPosEmb(time_emb_dim),
+            #     nn.Linear(time_emb_dim, time_emb_dim),
+            #     nn.Mish(),
+            #     nn.Linear(time_emb_dim, time_emb_dim),
+            # )
+            self.time_mlp = TimeEncoder(32, time_emb_dim) # use same time encoder as Unet
         else:
             self.time_mlp = None
 
@@ -71,18 +73,23 @@ class SmallOverlapEncoder(nn.Module):
         x: [B, L, D]
         time: optional [B] or [B, L] timesteps for positional encoding (only used if use_time_emb=True)
         """
+        import pdb
+        # pdb.set_trace()
         b, l, _ = x.shape
 
         if self.use_time_emb:
-            if time is None:
-                # default: positions 0..L-1
-                if self.pos_indices is None or self.pos_indices.numel() != l:
-                    self.pos_indices = torch.arange(l, device=x.device, dtype=torch.float32)
-                t_inp = self.pos_indices[None, :].expand(b, l)
-            else:
-                # broadcast if [B]
-                t_inp = time[:, None] if time.dim() == 1 else time
+            assert time is not None
+            # if time is None:
+            #     # default: positions 0..L-1
+            #     if self.pos_indices is None or self.pos_indices.numel() != l:
+            #         self.pos_indices = torch.arange(l, device=x.device, dtype=torch.float32)
+            #     t_inp = self.pos_indices[None, :].expand(b, l)
+
+            # else:
+            #     # broadcast if [B]
+            t_inp = time[:, None] if time.dim() == 1 else time
             t_feat = self.time_mlp(t_inp)  # [B, L, time_emb_dim]
+            pdb.set_trace()
             x = torch.cat([x, t_feat], dim=-1)
 
         h = self.per_step(x)  # [B, L, hidden_dim]

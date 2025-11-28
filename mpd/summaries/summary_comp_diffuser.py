@@ -63,10 +63,16 @@ class SummaryCompDiffuser(SummaryBase):
         # )
             
         # repeat hard conditions and contexts for n_samples
-        stgl_cond = {}
-        for k, v in hard_conds_render.items():
-            new_state = einops.repeat(v, "... -> b ...", b=n_samples)
-            stgl_cond[k] = new_state
+        # stgl_cond = {}
+        # for k, v in hard_conds_render.items():
+        #     new_state = einops.repeat(v, "... -> b ...", b=n_samples)
+        #     stgl_cond[k] = new_state
+
+        stgl_cond = apply_dict(
+            einops.repeat,
+            hard_conds_render,
+            'b d -> (repeat b) d', repeat=n_samples,
+        )
         traj_full = einops.repeat(data_sample_render["control_points"], 'b h d -> (repeat b) h d', 
                                           repeat=n_samples).to(tensor_args["device"])
         
@@ -185,12 +191,17 @@ class SummaryCompDiffuser(SummaryBase):
             hard_conds = data_sample["hard_conds"]
             context_d = dataset.build_context(data_sample=data_sample)
             
-            # repeat hard conditions and contexts for n_samples
-            stgl_cond = {}
-            for k, v in hard_conds.items():
-                new_state = einops.repeat(v, "... -> b ...", b=n_samples)
-                stgl_cond[k] = new_state
+            # # repeat hard conditions and contexts for n_samples
+            # stgl_cond = {}
+            # for k, v in hard_conds.items():
+            #     new_state = einops.repeat(v, "... -> b ...", b=n_samples)
+            #     stgl_cond[k] = new_state
             
+            stgl_cond = apply_dict(
+                einops.repeat,
+                hard_conds,
+                'b d -> (repeat b) d', repeat=n_samples,
+            )
             # context_d, hard_conds repeat batch in run_inference
             # for k, v in context_d.items():
             #     context_d[k] = einops.repeat(v, "... -> b ...", b=n_samples)
