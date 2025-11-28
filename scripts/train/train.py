@@ -188,7 +188,7 @@ def experiment(
             conv_kernel=3,
             pool="mean",
             use_time_emb=True,
-            time_emb_dim=16, 
+            time_emb_dim=32, 
         )
         network_config = dict(
             resblock_ksize=5, # fixed

@@ -56,7 +56,7 @@ class CompDiffusionModel(nn.Module, ABC):
         n_diffusion_steps=100,
         clip_denoised=True,
         predict_epsilon=False,
-        loss_type="l2",
+        loss_type='l2_inv_v3',
         # context_model=None,
         horizon=None,
         len_ovlp_cd=None,
@@ -228,6 +228,7 @@ class CompDiffusionModel(nn.Module, ABC):
                 # is_rand=True,
                 t_type=g_cond['t_type'],
                 is_noisy=False,
+                context_d = context_d, 
                 hard_conds={},
                 )
             # pdb.set_trace()
@@ -243,6 +244,7 @@ class CompDiffusionModel(nn.Module, ABC):
                 ##
                 t_type=g_cond['t_type'],
                 is_noisy=False,
+                context_d = context_d, 
                 hard_conds=g_cond['stgl_cond'],
                 )
             tj_cond['do_cond'] = True
@@ -259,6 +261,7 @@ class CompDiffusionModel(nn.Module, ABC):
                 ##
                 t_type=g_cond['t_type'],
                 is_noisy=False,
+                context_d = context_d, 
                 hard_conds= st_cond,
                 )
             tj_cond['do_cond'] = True
@@ -275,6 +278,7 @@ class CompDiffusionModel(nn.Module, ABC):
                 ##
                 t_type=g_cond['t_type'],
                 is_noisy=False,
+                context_d = context_d, 
                 hard_conds=end_cond,
                 )
             tj_cond['do_cond'] = True
@@ -285,6 +289,7 @@ class CompDiffusionModel(nn.Module, ABC):
             tj_cond = dict(st_ovlp_is_drop=None, end_ovlp_is_drop=None, 
                             is_st_inpat=torch.zeros_like(x[:,0,0]).to(torch.bool),
                             is_end_inpat=torch.zeros_like(x[:,0,0]).to(torch.bool),
+                            context_d = context_d, 
                             )
             tj_cond['do_cond'] = False
         else: 
@@ -297,7 +302,7 @@ class CompDiffusionModel(nn.Module, ABC):
         return x, tj_cond
 
     @torch.no_grad()
-    def conditional_sample(self, g_cond, horizon=None, batch_size=1, method="ddpm", **sample_kwargs):
+    def conditional_sample(self, g_cond, horizon=None, batch_size=1, method="ddim", **sample_kwargs):
         '''
             conditions : [ (time, state), ... ]
         '''
@@ -412,7 +417,7 @@ class CompDiffusionModel(nn.Module, ABC):
 
             x, tj_cond = self.get_tj_cond(x, g_cond, context_d, t)
 
-            assert guide is None # guide only applied when using ddim_sample alone
+            assert guide is None # guide only applied when using ddim_sample alone (during evaluation )
 
             tmp = self.ddim_sample(
                     x = x, 
@@ -511,7 +516,7 @@ class CompDiffusionModel(nn.Module, ABC):
         grad_prior = model_out
         
         def update_x(_x, _grad_prior):
-            _x_recon = self.predict_start_from_noise(_x, t=t, noise=_grad_prior)
+            _x_recon = self.predict_start_from_noise(_x, t, noise=_grad_prior)
             if self.clip_denoised:
                 _x_recon.clamp_(-1.0, 1.0)
             else:
@@ -521,12 +526,12 @@ class CompDiffusionModel(nn.Module, ABC):
             if self.guide_mode != "cfg" : 
                 # default self.predict_epsilon == True
                 # _pred_noise = _grad_prior (modified gradient from classifier guidance)
-                _pred_noise = self.predict_noise_from_start(_x, t=t, x0=_grad_prior)
+                _pred_noise = self.predict_noise_from_start(_x, t, x0=_grad_prior)
             else : 
                 if use_clipped_model_output : # always true
                     _pred_noise = (_x - alpha.sqrt() * _x_recon) / beta_prod_t.sqrt()
                 else : 
-                    _pred_noise = self.predict_noise_from_start(_x, t=t, x0=_x_recon)
+                    _pred_noise = self.predict_noise_from_start(_x, t, x0=_x_recon)
 
             _x = _x_recon * alpha_next.sqrt() + c * _pred_noise
             # _x = apply_hard_conditioning(_x, hard_conds)
@@ -849,9 +854,9 @@ class CompDiffusionModel(nn.Module, ABC):
         }
         # pdb.set_trace() ## TODO: check
         
-        if self.guide_mode == "default" : # no drop
-            tj_cond['st_ovlp_is_drop'] = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
-            tj_cond['end_ovlp_is_drop'] = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
+        # if self.guide_mode == "default" : # no drop
+        #     tj_cond['st_ovlp_is_drop'] = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
+        #     tj_cond['end_ovlp_is_drop'] = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
 
         return x_noisy, tj_cond
 
@@ -911,9 +916,10 @@ class CompDiffusionModel(nn.Module, ABC):
             # batch_size = st_traj.shape[0]
         
         ## start conditioning
-        if 0 in hard_conds.keys():
+        #if 0 in hard_conds.keys():
+        if st_traj is None : 
             # pdb.set_trace()
-            assert st_traj is None
+            # assert st_traj is None
             st_cond = self.split_hard_conds(hard_conds, is_start=True)
             x_et = apply_hard_conditioning(x_et, st_cond)
             is_st_inpat = torch.ones(size=(batch_size,), dtype=torch.bool, device=device)
@@ -934,14 +940,14 @@ class CompDiffusionModel(nn.Module, ABC):
         ## when use ee_pose_goal 
 
         ## do inpainting conditioning
-        if hzn_minus1 in hard_conds.keys():
+        # if hzn_minus1 in hard_conds.keys():
+        if end_traj is None : 
             # pdb.set_trace()
-            assert end_traj is None
+            # assert end_traj is None
             end_cond = self.split_hard_conds(hard_conds, is_start=False)
             x_et = apply_hard_conditioning(x_et, end_cond)
             is_end_inpat = torch.ones(size=(batch_size,), dtype=torch.bool, device=device)
         else:
-            # end_traj can be None here
             is_end_inpat = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
 
         # ## each end should have some conditions

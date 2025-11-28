@@ -55,25 +55,18 @@ class SummaryCompDiffuser(SummaryBase):
         data_sample_render = dict_to_device(dataset[idx_render], device=tensor_args["device"])
         context_d_render = dataset.build_context(data_sample=data_sample_render)
         hard_conds_render = data_sample_render["hard_conds"]
-        # control_points_normalized = model.run_inference(
-        #     context_d=context_d_render,
-        #     hard_conds=hard_conds_render,
-        #     n_samples=n_samples,
-        #     horizon=horizon,
-        # )
+        
+        for k, v in hard_conds_render.items():
+            hard_conds_render[k] = v.unsqueeze(0) # add batch 1 
             
-        # repeat hard conditions and contexts for n_samples
-        # stgl_cond = {}
-        # for k, v in hard_conds_render.items():
-        #     new_state = einops.repeat(v, "... -> b ...", b=n_samples)
-        #     stgl_cond[k] = new_state
-
         stgl_cond = apply_dict(
             einops.repeat,
             hard_conds_render,
             'b d -> (repeat b) d', repeat=n_samples,
         )
-        traj_full = einops.repeat(data_sample_render["control_points"], 'b h d -> (repeat b) h d', 
+
+        one_traj = data_sample_render["control_points"].unsqueeze(0)
+        traj_full = einops.repeat(one_traj, 'b h d -> (repeat b) h d', 
                                           repeat=n_samples).to(tensor_args["device"])
         
         # plot case for both conditioned
@@ -189,6 +182,8 @@ class SummaryCompDiffuser(SummaryBase):
             # ------------------------------------------------------------------------------------
             # Sample control points with the inference model
             hard_conds = data_sample["hard_conds"]
+            for k, v in hard_conds.items():
+                hard_conds[k] = v.unsqueeze(0) # add batch 1 
             context_d = dataset.build_context(data_sample=data_sample)
             
             # # repeat hard conditions and contexts for n_samples
@@ -207,7 +202,8 @@ class SummaryCompDiffuser(SummaryBase):
             #     context_d[k] = einops.repeat(v, "... -> b ...", b=n_samples)
             # build g_cond for each do_cond
 
-            traj_full = einops.repeat(data_sample["control_points"], 'b h d -> (repeat b) h d', 
+            one_traj = data_sample["control_points"].unsqueeze(0)
+            traj_full = einops.repeat(one_traj, 'b h d -> (repeat b) h d', 
                                           repeat=n_samples).to(tensor_args["device"])
             
             if do_cond == 'both_ovlp':

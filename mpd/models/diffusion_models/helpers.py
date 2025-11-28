@@ -161,8 +161,38 @@ class WeightedL2(WeightedLoss):
     def _loss(self, pred, targ):
         return F.mse_loss(pred, targ, reduction="none")
 
+class WeightedLoss_L2_InvDyn_V3(nn.Module):
+    '''
+    Added by luo, July 28 2024,
+    ** support inputing a training time loss weight **
+    '''
+    def __init__(self, weights=None):
+        super().__init__()
+        self.register_buffer('weights', weights)
 
+
+    def forward(self, pred, targ, ext_loss_w=1.):
+        '''
+            pred, targ : tensor
+                [ batch_size x horizon x transition_dim ]
+            ext_loss_w: tensor [B,H,1] or 1.
+        '''
+        ## B,H,1 * B,H,D
+        loss = ext_loss_w * self._loss(pred, targ)
+        # pdb.set_trace()
+        ## can auto boardcast, weights: (B,H,dim) * (H,dim) -> (B,H,dim)
+        if self.weights is not None:
+            weighted_loss = (loss * self.weights).mean()
+        else:
+            weighted_loss = loss.mean()
+
+        return weighted_loss, {} # {'a0_loss': 0.}
+
+    def _loss(self, pred, targ):
+        return F.mse_loss(pred, targ, reduction='none')
+    
 Losses = {
     "l1": WeightedL1,
     "l2": WeightedL2,
+    'l2_inv_v3' : WeightedLoss_L2_InvDyn_V3,
 }

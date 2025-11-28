@@ -58,7 +58,7 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
 
 
         self.context_model = context_model 
-        assert context_model is not None 
+        
         self.n_support_points = n_support_points
         self.state_dim = state_dim
         
@@ -101,7 +101,11 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
         self.end_inpaint_model = nn.Identity()
         self.inpaint_token_dim = self.network_config['inpaint_token_dim'] ## e.g., 32
         self.inpaint_token_type = self.network_config['inpaint_token_type'] ## e.g., const
-        if self.inpaint_token_type == 'const':
+
+        if self.context_model and self.context_model.context_model_qs is not None : # no hard conditions
+            self.inpaint_token_type ='disabled' 
+        
+        elif self.inpaint_token_type == 'const':
             self.st_use_inpaint_token: torch.Tensor
             self.register_buffer( 'st_use_inpaint_token', \
                                  torch.full(size=(1,self.inpaint_token_dim), fill_value=1., dtype=torch.float32) )
@@ -127,7 +131,9 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
 
         assert self.resblock_ksize == 5, 'the default settings'
         
-        tot_cond_dim = time_emb_dim + wall_embed_dim + self.context_model.out_dim + 2 * self.inpaint_token_dim
+        context_out_dim = self.context_model.out_dim if self.context_model else 0 
+        inpaint_out_dim = self.inpaint_token_dim if self.inpaint_token_type == "const" else 0
+        tot_cond_dim = time_emb_dim + wall_embed_dim + context_out_dim + 2 * inpaint_out_dim
         self.tot_cond_dim = tot_cond_dim
         # pdb.set_trace() ## check above
 
@@ -148,6 +154,7 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
         ext_cond_dim = wall_embed_dim
         # print(f'[TemporalUnet_WCond] concept_drop_prob: {self.concept_drop_prob}')
         print_color(f'[TemporalUnet_WCond] {time_emb_dim=}, {tot_cond_dim=}, {ext_cond_dim=}')
+        print_color(f'[TemporalUnet_WCond] context : {self.context_model is not None}, token : {self.inpaint_token_type == "const"}')
         # pdb.set_trace()
         self.input_t_type = '1d'
 
@@ -233,7 +240,10 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
         '''
         ### mpd
         if not warm_up :
-            context_emb = self.context_model(**tj_cond['context_d'])
+            if self.context_model:
+                context_emb = self.context_model(**tj_cond['context_d'])
+            else : 
+                context_emb = None 
             ### comp_diffuser 
             is_st_inpat = tj_cond['is_st_inpat'] ## torch tensor gpu
             is_end_inpat = tj_cond['is_end_inpat']
@@ -269,6 +279,7 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
                 st_ovlp_feat[ st_ovlp_is_drop ] = 0.
                 # (~st_ovlp_is_drop) == 
                 assert not torch.logical_and(~st_ovlp_is_drop, is_st_inpat).any() ## must be false
+                
             else:
                 ## no cond if None
                 # st_ovlp_feat = torch.zeros_like(st_ovlp_feat)
@@ -303,8 +314,12 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
 
                 st_token = self.st_inpaint_model(st_token)
                 end_token = self.end_inpaint_model(end_token)
-            else:
+            elif self.inpaint_token_type == 'disabled' : 
+                st_token = None
+                end_token = None
+            else : 
                 raise NotImplementedError
+
             ## NOTE: for one side, we can only either do inpainting or ovlp conditioning
 
 
@@ -317,9 +332,21 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
                     assert b_s % 2 == 0
                     st_ovlp_feat[int(b_s//2):] = 0. # * st_ovlp_feat[int(b_s//2):] 
                     end_ovlp_feat[int(b_s//2):] = 0. # * end_ovlp_feat[int(b_s//2):] 
+                    if context_emb is not None : 
+                        context_emb[int(b_s//2):] = 0.
 
             ## e.g., B, time_emb_dim+128+128
-            t_feat = torch.cat([t_feat, st_ovlp_feat, end_ovlp_feat, context_emb, st_token, end_token], dim=-1)
+            feat_list = [t_feat, st_ovlp_feat, end_ovlp_feat]
+
+            if context_emb is not None:
+                feat_list.append(context_emb)
+
+            if st_token is not None : 
+                feat_list.extend([st_token, end_token])
+
+            t_feat = torch.cat(feat_list, dim=-1)
+            #t_feat = torch.cat([t_feat, st_ovlp_feat, end_ovlp_feat, context_emb, st_token, end_token], dim=-1)
+                
         else :
             b_size = x.shape[0]
             t_feat = torch.randn(b_size, self.tot_cond_dim , device=x.device)
