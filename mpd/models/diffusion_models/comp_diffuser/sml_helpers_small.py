@@ -73,23 +73,23 @@ class SmallOverlapEncoder(nn.Module):
         x: [B, L, D]
         time: optional [B] or [B, L] timesteps for positional encoding (only used if use_time_emb=True)
         """
-        import pdb
-        # pdb.set_trace()
         b, l, _ = x.shape
 
         if self.use_time_emb:
             assert time is not None
-            # if time is None:
-            #     # default: positions 0..L-1
-            #     if self.pos_indices is None or self.pos_indices.numel() != l:
-            #         self.pos_indices = torch.arange(l, device=x.device, dtype=torch.float32)
-            #     t_inp = self.pos_indices[None, :].expand(b, l)
+            # Broadcast or flatten time for encoding, then reshape back.
+            if time.dim() == 1:
+                # diffusion step per batch -> expand across window
+                t_inp = time[:, None].expand(b, l)
+            elif time.dim() == 2:
+                t_inp = time
+                assert t_inp.shape == (b, l), "time must match x[: , :window] when 2D"
+            else:
+                raise ValueError("time must be shape [B] or [B, L]")
 
-            # else:
-            #     # broadcast if [B]
-            t_inp = time[:, None] if time.dim() == 1 else time
-            t_feat = self.time_mlp(t_inp)  # [B, L, time_emb_dim]
-            pdb.set_trace()
+            t_flat = t_inp.reshape(-1)  # [B*L]
+            t_feat_flat = self.time_mlp(t_flat)  # [B*L, time_emb_dim]
+            t_feat = t_feat_flat.reshape(b, l, -1)  # [B, L, time_emb_dim]
             x = torch.cat([x, t_feat], dim=-1)
 
         h = self.per_step(x)  # [B, L, hidden_dim]
