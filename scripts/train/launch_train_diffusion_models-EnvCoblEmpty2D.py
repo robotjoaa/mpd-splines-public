@@ -47,23 +47,40 @@ launcher = Launcher(
 ########################################################################################################################
 # Setup and run experiments
 single_experiment_params_base_l = [
-    # EnvSimple2D-RobotPointMass2D
     OrderedDict(
         dataset_subdir__="EnvCoblEmpty2D-RobotPointMass2DBig",
         context_ee_goal_pose__=False,
-        batch_size=128,
-        num_train_steps=100_000,
-        unet_input_dim__=16,
+        batch_size=256,
+        num_train_steps=3_000_000, #6_000_000
+        unet_input_dim__=32, #32
         unet_dim_mults_option__=0,
         context_qs_n_layers=1,
         context_q_out_dim__=32,
         context_ee_goal_pose_n_layers=1,
         context_ee_goal_pose_out_dim__=32,
         context_combined_out_dim__=32,
-        bspline_num_control_points_desired__=16,
+        bspline_num_control_points_desired__=22, # bspline
         num_T_pts=80,
     ),
 ]
+
+# single_experiment_params_base_l = [
+#     OrderedDict(
+#         dataset_subdir__="EnvCoblEmpty2D-RobotPointMass2DBig",
+#         context_ee_goal_pose__=False,
+#         batch_size=128,
+#         num_train_steps=100_000, #6_000_000
+#         unet_input_dim__=16, #32
+#         unet_dim_mults_option__=0,
+#         context_qs_n_layers=1,
+#         context_q_out_dim__=32,
+#         context_ee_goal_pose_n_layers=1,
+#         context_ee_goal_pose_out_dim__=32,
+#         context_combined_out_dim__=32,
+#         bspline_num_control_points_desired__=16, # waypoints
+#         num_T_pts=80,
+#     ),
+# ]
 
 parametric_trajectory_class_l = []
 parametric_trajectory_class_l += [
@@ -93,7 +110,7 @@ for single_experiment_params_base, parametric_trajectory_class, dataset_file_mer
 
 # os.environ["WANDB_API_KEY"] = "999"
 wandb_options = dict(
-    wandb_mode="disabled", wandb_entity="mpd-splines", wandb_project=EXPERIMENT_NAME  # "online", "offline" or "disabled"
+    wandb_mode="online", wandb_entity="robotjoaa1", wandb_project=EXPERIMENT_NAME  # "online", "offline" or "disabled"
 )
 
 for single_experiment_params in single_experiment_params_l:
@@ -113,16 +130,16 @@ for single_experiment_params in single_experiment_params_l:
         generative_model_class__="GaussianDiffusionModel",
         **single_experiment_params,
         context_qs=True,
-        reload_data=True,
+        reload_data=False,
         preload_data_to_device=False,
         n_task_samples=-1,
         clip_grad=True,
         use_ema=True,
-        steps_til_summary=5_000,
-        steps_til_ckpt=5_000,
-        device="cuda:0",
+        steps_til_summary=50_000,
+        steps_til_ckpt=100_000,
+        device="cuda:3",
         **wandb_options,
-        debug=True,
+        debug=False,
     )
 
 launcher.run(LOCAL)

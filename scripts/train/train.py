@@ -21,7 +21,7 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 os.environ["WANDB_API_KEY"] = "947955d5becc706e9ab246bec4867a259c529ec1"
 WANDB_MODE = "online"
 WANDB_ENTITY = "mpd-splines"
-DEBUG = False
+DEBUG = True
 
 
 @single_experiment_yaml

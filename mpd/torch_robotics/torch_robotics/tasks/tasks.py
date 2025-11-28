@@ -384,7 +384,7 @@ class PlanningTask(Task):
                 trajs_valid_tmp = q_trajs[trajs_valid_idxs.squeeze(), ...]
 
             trajs_valid_tmp_position = self.get_position(trajs_valid_tmp)
-            print(trajs_valid_tmp_position)
+            
             check_list = [
                 trajs_valid_tmp_position >= self.robot.q_pos_min,
                 trajs_valid_tmp_position <= self.robot.q_pos_max,

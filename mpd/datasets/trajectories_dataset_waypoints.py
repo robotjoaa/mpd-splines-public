@@ -207,7 +207,6 @@ class TrajectoryDatasetWaypoints(TrajectoryDatasetBspline):
 
             print("... done loading data.")
             print(f"Loading data took {t_load_data.elapsed:.2f} seconds.")
-            raise NotImplementedError
 
     def get_hard_conditions(self, data_d, **kwargs):
         hard_conds = {}

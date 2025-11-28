@@ -14,9 +14,9 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 LOCAL = is_local()
 USE_CUDA = True
 
-N_EXPS_IN_PARALLEL = 4
+N_EXPS_IN_PARALLEL = 1
 
-N_CORES = N_EXPS_IN_PARALLEL * 2
+N_CORES = N_EXPS_IN_PARALLEL * 16
 MEMORY_SINGLE_JOB = 6000
 PARTITION = "gpu" if USE_CUDA else "amd3,amd2,amd"
 GRES = "gpu:1" if USE_CUDA else None
