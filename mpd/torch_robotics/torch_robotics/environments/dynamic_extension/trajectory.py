@@ -183,6 +183,7 @@ class LinearTrajectory(TrajectoryInterpolator):
             dpos = self.keyframe_positions[1] - self.keyframe_positions[0]
             return dpos / (dt + 1e-8)
         else:
+            # Needs change
             # Multi-segment: return average velocity
             dt = self.keyframe_times[-1] - self.keyframe_times[0]
             dpos = self.keyframe_positions[-1] - self.keyframe_positions[0]
@@ -417,6 +418,8 @@ class WaypointTrajectory(TrajectoryInterpolator):
         else:
             raise TypeError(f"Unsupported trajectory type: {type(trajectories)}")
 
+        assert self.n_obstacles == 1
+
         # Set up time steps
         if time_steps is not None:
             self.time_steps = to_torch(time_steps, **tensor_args)
@@ -510,24 +513,157 @@ class WaypointTrajectory(TrajectoryInterpolator):
             velocities = velocities.squeeze(0)  # [N, 2]
             orientations = orientations.squeeze(0)  # [N, 2]
 
+        # Since we only support single obstacle (n_obstacles == 1), extract that obstacle
+        # positions: [N, 2] or [batch_t, N, 2]
+        # Need to return (pos, ori) matching TrajectoryInterpolator interface
+
+        if is_scalar_t:
+            # Single timestep: positions is [1, 2]
+            pos_2d = positions  # [2]
+            ori_2x2 = orientations  # [2] (cos, sin)
+        else:
+            # Multiple timesteps: positions is [batch_t, 1, 2]
+            pos_2d = positions.squeeze(1)  # [batch_t, 2]
+            ori_2x2 = orientations.squeeze(1)  # [batch_t, 2] (cos, sin)
+
+        # Pad 2D positions to 3D (add z=0)
+        if is_scalar_t:
+            pos = torch.cat([pos_2d, torch.zeros(1, **self.tensor_args)])  # [3]
+        else:
+            pos = torch.cat([pos_2d, torch.zeros(pos_2d.shape[0], 1, **self.tensor_args)], dim=1)  # [batch_t, 3]
+
+        # Convert (cos, sin) to 3x3 rotation matrix
+        # For 2D rotation around z-axis: R = [[cos, -sin, 0], [sin, cos, 0], [0, 0, 1]]
+        if is_scalar_t:
+            cos_theta = ori_2x2[0]
+            sin_theta = ori_2x2[1]
+            ori = torch.tensor([
+                [cos_theta, -sin_theta, 0],
+                [sin_theta, cos_theta, 0],
+                [0, 0, 1]
+            ], **self.tensor_args)  # [3, 3]
+        else:
+            # Batch version
+            batch_size = pos_2d.shape[0]
+            cos_theta = ori_2x2[:, 0]  # [batch_t]
+            sin_theta = ori_2x2[:, 1]  # [batch_t]
+
+            ori = torch.zeros(batch_size, 3, 3, **self.tensor_args)
+            ori[:, 0, 0] = cos_theta
+            ori[:, 0, 1] = -sin_theta
+            ori[:, 1, 0] = sin_theta
+            ori[:, 1, 1] = cos_theta
+            ori[:, 2, 2] = 1.0  # [batch_t, 3, 3]
+
+        return pos, ori
+
+    def get_start_position(self, obstacle_indices=None):
+        """
+        Get starting position of trajectory. without interpolation
+
+        Returns:
+            pos: Starting position, shape (N,2)
+        """
+        # if obstacle_indices is None:
+        #     obs_indices = list(range(self.n_obstacles))
+        # else:
+        #     if isinstance(obstacle_indices, int):
+        #         obs_indices = [obstacle_indices]
+        #     else:
+        #         obs_indices = obstacle_indices
+
+        positions = torch.zeros(1, 2, **self.tensor_args)
+        positions = self.trajectories[0][0, :2]
+        return positions
+
+    def get_full_state(self, t, obstacle_indices=None, clamp=True):
+        """
+        Get full state dictionary (positions, velocities, orientations).
+        This is the internal implementation that returns raw 2D data.
+
+        Args:
+            t: Query time(s), scalar or tensor [batch_t]
+            obstacle_indices: Optional list/tensor of obstacle indices to query
+            clamp: If True, clamps time to valid range [t_min, t_max]
+
+        Returns:
+            states: Dictionary containing:
+                - 'positions': [batch_t, N, 2] or [N, 2] if t is scalar
+                - 'velocities': [batch_t, N, 2] or [N, 2] if t is scalar
+                - 'orientations': [batch_t, N, 2] or [N, 2] if t is scalar (cos, sin)
+        """
+        # Convert t to tensor
+        if not isinstance(t, torch.Tensor):
+            t = torch.tensor(t, **self.tensor_args)
+
+        is_scalar_t = t.ndim == 0
+        if is_scalar_t:
+            t = t.unsqueeze(0)  # [1]
+
+        # Clamp or allow extrapolation
+        if clamp:
+            t = torch.clamp(t, self.t_min, self.t_max)
+
+        # Determine which obstacles to query
+        if obstacle_indices is None:
+            obs_indices = list(range(self.n_obstacles))
+        else:
+            if isinstance(obstacle_indices, int):
+                obs_indices = [obstacle_indices]
+            else:
+                obs_indices = obstacle_indices
+
+        n_query_obs = len(obs_indices)
+        batch_t = t.shape[0]
+
+        # Initialize output tensors
+        positions = torch.zeros(batch_t, n_query_obs, 2, **self.tensor_args)
+        velocities = torch.zeros(batch_t, n_query_obs, 2, **self.tensor_args)
+        orientations = torch.zeros(batch_t, n_query_obs, 2, **self.tensor_args)
+
+        # Interpolate each obstacle
+        for i, obs_idx in enumerate(obs_indices):
+            traj = self.trajectories[obs_idx]  # [T, 6]
+
+            # Find bounding time indices for interpolation
+            idx_high = torch.searchsorted(self.time_steps, t, right=False)
+            idx_high = idx_high.clamp(1, len(self.time_steps) - 1)
+            idx_low = idx_high - 1
+
+            # Get bounding states
+            t_low = self.time_steps[idx_low]  # [batch_t]
+            t_high = self.time_steps[idx_high]  # [batch_t]
+
+            states_low = traj[idx_low]  # [batch_t, 6]
+            states_high = traj[idx_high]  # [batch_t, 6]
+
+            # Compute interpolation weight
+            alpha = ((t - t_low) / (t_high - t_low + 1e-8)).clamp(0, 1)  # [batch_t]
+            alpha = alpha.unsqueeze(-1)  # [batch_t, 1]
+
+            # Linear interpolation
+            states_interp = (1 - alpha) * states_low + alpha * states_high  # [batch_t, 6]
+
+            # Extract components
+            positions[:, i, :] = states_interp[:, 0:2]  # [x, y]
+            velocities[:, i, :] = states_interp[:, 2:4]  # [vx, vy]
+            orientations[:, i, :] = states_interp[:, 4:6]  # [cos(θ), sin(θ)]
+
+        # Squeeze if input was scalar time
+        if is_scalar_t:
+            positions = positions.squeeze(0)  # [N, 2]
+            velocities = velocities.squeeze(0)  # [N, 2]
+            orientations = orientations.squeeze(0)  # [N, 2]
+
         return {
             'positions': positions,
             'velocities': velocities,
             'orientations': orientations
         }
 
-    def get_start_position(self):
-        """
-        Get starting position of trajectory.
-
-        Returns:
-            pos: Starting position, shape (3,)
-        """
-        return self.trajectories[0]
-
     def get_positions(self, t, obstacle_indices=None, clamp=True):
         """
-        Convenience method to get only positions.
+        Convenience method to get only positions (2D).
 
         Args:
             t: Query time(s)
@@ -537,11 +673,11 @@ class WaypointTrajectory(TrajectoryInterpolator):
         Returns:
             positions: [batch_t, N, 2] or [N, 2] if t is scalar
         """
-        return self(t, obstacle_indices, clamp)['positions']
+        return self.get_full_state(t, obstacle_indices, clamp)['positions']
 
     def get_velocities(self, t, obstacle_indices=None, clamp=True):
         """
-        Convenience method to get only velocities.
+        Convenience method to get only velocities (2D).
 
         Args:
             t: Query time(s)
@@ -551,11 +687,11 @@ class WaypointTrajectory(TrajectoryInterpolator):
         Returns:
             velocities: [batch_t, N, 2] or [N, 2] if t is scalar
         """
-        return self(t, obstacle_indices, clamp)['velocities']
+        return self.get_full_state(t, obstacle_indices, clamp)['velocities']
 
     def get_orientations(self, t, obstacle_indices=None, clamp=True):
         """
-        Convenience method to get only orientations.
+        Convenience method to get only orientations (2D cos/sin).
 
         Args:
             t: Query time(s)
@@ -565,7 +701,7 @@ class WaypointTrajectory(TrajectoryInterpolator):
         Returns:
             orientations: [batch_t, N, 2] or [N, 2] if t is scalar (cos, sin)
         """
-        return self(t, obstacle_indices, clamp)['orientations']
+        return self.get_full_state(t, obstacle_indices, clamp)['orientations']
 
     def __len__(self):
         """Return number of obstacles."""

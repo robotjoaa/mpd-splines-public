@@ -20,12 +20,23 @@ from torch_robotics import environments, robots
 from torch_robotics.tasks.tasks import PlanningTask
 from torch_robotics.tasks.dynamic_tasks import DynPlanningTask
 from torch_robotics.torch_utils.torch_utils import freeze_torch_model_params, DEFAULT_TENSOR_ARGS
-
+import pickle
 def get_problem_config(
     **kwargs
 ) : 
-    return None 
-    base_dir = os.path.join(DATASET_BASE_DIR, problem_dir)
+    if kwargs.get('env_id_replace') == 'EnvCobl2D' : 
+        eval_dataset_path = kwargs.get('eval_dataset_path')
+        with open(eval_dataset_path, 'rb') as f:
+            eval_data = pickle.load(f)
+
+
+        res_dict = {}
+        key_l = ['problems', 'n_scenarios', 'n_problems_per_scenario']
+        for k in key_l : 
+            res_dict[k] = eval_data[k]
+
+        return res_dict
+
     ### TODO : load problems configuration from the problem dir 
     return None
 
@@ -155,7 +166,7 @@ def get_planning_task_and_dataset(
         hasattr(env, 'time_range') or
         (hasattr(env, 'is_static') and not env.is_static)
     )
-
+    #print(f"{is_dynamic_env=}")
     if is_dynamic_env : 
         planning_task = DynPlanningTask(
             env=env,

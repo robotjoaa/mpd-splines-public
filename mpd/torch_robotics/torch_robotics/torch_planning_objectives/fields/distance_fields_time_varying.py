@@ -126,6 +126,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             for df_time_varying in df_obj_list:
                 scale = 1 
                 if isinstance(df_time_varying, MovingObjectField) : 
+                    #print(df_time_varying.name)
                     scale = self.grad_scale 
                     sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
                         link_pos_query, timesteps=timesteps_query, get_gradient=True
@@ -159,11 +160,11 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             for df_time_varying in df_obj_list:
                 if isinstance(df_time_varying, MovingObjectField) : 
                     scale = self.grad_scale 
-                    sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
+                    sdf_vals = df_time_varying.compute_signed_distance(
                         link_pos_query, timesteps=timesteps_query, get_gradient=False
                     )
                 else : 
-                    sdf_vals, sdf_gradient = df_time_varying.compute_signed_distance(
+                    sdf_vals = df_time_varying.compute_signed_distance(
                         link_pos_query, get_gradient=False
                     )
                 # sdf_vals: (batch*horizon*num_links,)
@@ -214,7 +215,8 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             margin_minus_sdf_clamped = torch.relu(margin_minus_sdf)
         else:
             margin_minus_sdf_clamped = margin_minus_sdf
-
+        #print(sdf_gradient.shape)
+        #print(f"{sdf_gradient=}")
         # Handle multiple objects case
         if margin_minus_sdf_clamped.ndim >= 3:
             if margin_minus_sdf_clamped.shape[-2] == 1:

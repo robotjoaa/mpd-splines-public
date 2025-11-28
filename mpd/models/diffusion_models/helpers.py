@@ -6,6 +6,67 @@ import torch.nn.functional as F
 from torch_robotics.torch_utils.torch_utils import to_torch
 
 
+# helpers from comp_diffuser
+from colorama import Fore
+
+def print_color(s, *args, c='r'):
+    if c == 'r':
+        # print(Fore.RED + s + Fore.RESET)
+        print(Fore.RED, end='')
+        print(s, *args, Fore.RESET)
+    elif c == 'b':
+        # print(Fore.BLUE + s + Fore.RESET)
+        print(Fore.BLUE, end='')
+        print(s, *args, Fore.RESET)
+    elif c == 'y':
+        # print(Fore.YELLOW + s + Fore.RESET)
+        print(Fore.YELLOW, end='')
+        print(s, *args, Fore.RESET)
+    else:
+        # print(Fore.CYAN + s + Fore.RESET)
+        print(Fore.CYAN, end='')
+        print(s, *args, Fore.RESET)
+
+def extract_2d(a, t, x_shape):
+    """
+    extract to t, to two dimension, e.g., return (B, H, 1)
+    """
+    assert a.ndim == 1 and t.ndim == 2
+    b, h, *_ = t.shape
+    ## NOTE: when t is also tensor, will create a new tensor
+    out = a[t]
+    # pdb.set_trace()
+    out = out.reshape(b, h, *((1,) * (len(x_shape) - 2)))
+    ## out: B, H, 1
+    # pdb.set_trace()
+
+    return out
+    
+def batch_repeat_tensor_in_dict(x: torch.Tensor, t_2d: torch.Tensor, cond_dd: dict, n_rp: int):
+	'''
+	FIXED: Return a new dict rather than modified the original Dict!
+	'''
+	if x is not None:
+		## B H D
+		x = x.repeat( (n_rp, 1, 1) )
+	if t_2d is not None:
+		assert t_2d.ndim == 2
+		t_2d = t_2d.repeat( (n_rp, 1,) )
+	
+	new_dd = {}
+	for k in cond_dd.keys():
+		if torch.is_tensor(cond_dd[k]):
+			new_dd[k] = cond_dd[k].repeat(   [n_rp] + [1,] * len(cond_dd[k].shape[1:])  )
+		elif type(cond_dd[k]) == np.ndarray:
+			# dd[k]
+			new_dd[k] = einops.repeat(cond_dd[k], 'b ... -> (rr b) ...', rr=n_rp )
+		else:
+			new_dd[k] = cond_dd[k]
+			assert type(cond_dd[k]) in [bool, type(None)]
+
+			
+	return x, t_2d, new_dd
+
 # -----------------------------------------------------------------------------#
 # ---------------------------- variance schedules -----------------------------#
 # -----------------------------------------------------------------------------#
@@ -100,8 +161,38 @@ class WeightedL2(WeightedLoss):
     def _loss(self, pred, targ):
         return F.mse_loss(pred, targ, reduction="none")
 
+class WeightedLoss_L2_InvDyn_V3(nn.Module):
+    '''
+    Added by luo, July 28 2024,
+    ** support inputing a training time loss weight **
+    '''
+    def __init__(self, weights=None):
+        super().__init__()
+        self.register_buffer('weights', weights)
 
+
+    def forward(self, pred, targ, ext_loss_w=1.):
+        '''
+            pred, targ : tensor
+                [ batch_size x horizon x transition_dim ]
+            ext_loss_w: tensor [B,H,1] or 1.
+        '''
+        ## B,H,1 * B,H,D
+        loss = ext_loss_w * self._loss(pred, targ)
+        # pdb.set_trace()
+        ## can auto boardcast, weights: (B,H,dim) * (H,dim) -> (B,H,dim)
+        if self.weights is not None:
+            weighted_loss = (loss * self.weights).mean()
+        else:
+            weighted_loss = loss.mean()
+
+        return weighted_loss, {} # {'a0_loss': 0.}
+
+    def _loss(self, pred, targ):
+        return F.mse_loss(pred, targ, reduction='none')
+    
 Losses = {
     "l1": WeightedL1,
     "l2": WeightedL2,
+    'l2_inv_v3' : WeightedLoss_L2_InvDyn_V3,
 }

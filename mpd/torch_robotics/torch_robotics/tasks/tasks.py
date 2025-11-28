@@ -176,14 +176,14 @@ class PlanningTask(Task):
         else:
             return self.robot.random_q(**kwargs)
 
-    def random_coll_free_q_pos(self, n_samples=1, max_samples=1000, max_tries=1000):
+    def random_coll_free_q_pos(self, n_samples=1, max_samples=1000, max_tries=1000, **kwargs):
         # Random position in configuration space not in collision
         reject = True
         samples = torch.zeros((n_samples, self.robot.q_dim), **self.tensor_args)
         idx_begin = 0
         for i in range(max_tries):
             qs = self.robot.random_q(max_samples)
-            in_collision = self.compute_collision(qs).squeeze()
+            in_collision = self.compute_collision(qs, **kwargs).squeeze()
             idxs_not_in_collision = torch.argwhere(in_collision == False).squeeze()
             if idxs_not_in_collision.nelement() == 0:
                 # all points are in collision
@@ -329,7 +329,8 @@ class PlanningTask(Task):
     def get_trajs_unvalid_and_valid(
         self, q_trajs, return_indices=False, num_interpolation=0, filter_joint_limits_vel_acc=False, **kwargs
     ):
-        #print("get_trajs_unvalid_and_valid")
+        # print("get_trajs_unvalid_and_valid")
+        # print(q_trajs)
         assert q_trajs.ndim == 3 or q_trajs.ndim == 4
         N = 1
         if q_trajs.ndim == 4:  # n_goals (or steps), batch of trajectories, length, dim
@@ -350,9 +351,9 @@ class PlanningTask(Task):
         # might be. A 0 margin guarantees that we do not discard those trajectories, while ensuring they are not in
         # collision (margin < 0).
         trajs_waypoints_collisions = self.compute_collision(
-            trajs_interpolated, margin=self.margin_for_dense_collision_checking
+            trajs_interpolated, margin=self.margin_for_dense_collision_checking, **kwargs
         )
-        # print(trajs_waypoints_collisions)
+        #print(trajs_waypoints_collisions)
         if isinstance(trajs_waypoints_collisions,int) and trajs_waypoints_collisions == 0 : 
             if q_trajs.ndim == 4 : 
                 Ns = q_trajs.shape[0]
@@ -372,7 +373,8 @@ class PlanningTask(Task):
 
             trajs_valid_idxs = torch.argwhere(torch.logical_not(trajs_waypoints_collisions).all(dim=-1))
             trajs_unvalid_idxs = torch.argwhere(trajs_waypoints_collisions.any(dim=-1))
-
+        # print(trajs_valid_idxs)
+        # print(trajs_unvalid_idxs)
         ###############################################################################################################
         # Filter the trajectories that are not in collision and are inside the joint limits
         if trajs_valid_idxs.nelement() == 0:

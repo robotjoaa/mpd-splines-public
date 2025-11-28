@@ -127,7 +127,8 @@ def experiment(
         planning_task,
         train_subset,
         val_subset,
-        selection_start_goal=selection_start_goal,
+        selection_start_goal=selection_start_goal \
+            if selection_start_goal in ["training", "validation"] else "validation", #placeholder
         planner="RRTConnect",
         tensor_args=tensor_args,
         debug=debug,
@@ -193,8 +194,11 @@ def experiment(
     # Plan for several start and goal states sequentially
     if selection_start_goal == "training":
         idx_sample_l = np.random.choice(np.arange(len(train_subset)), n_start_goal_states)
-    else:
+    elif selection_start_goal == "validation":
         idx_sample_l = np.random.choice(np.arange(len(val_subset)), n_start_goal_states)
+    else : # test
+        eval_len = loaded_map['n_scenarios']
+        idx_sample_l = np.random.choice(np.arange(int(eval_len)), n_start_goal_states)
 
     # reproduce failed index
     # failed_dict = {
@@ -227,7 +231,7 @@ def experiment(
             np.array([35, 64])
     }
     failed_idx = failed_dict[args_inference.model_selection]
-    debug_failed = True
+    debug_failed = False
     for idx_sg, idx_sample in enumerate(idx_sample_l):
         if debug_failed and idx_sg not in failed_idx : 
             continue
@@ -237,8 +241,16 @@ def experiment(
         print(f"--------------------------------------------------------------------------------------------------")
 
         results_single_plan = DotMap(t_generator=0.0, t_guide=0.0)
-
-        q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
+        if selection_start_goal == "test" : 
+            assert loaded_map is not None
+            problems = loaded_map['problems'][idx_sample]
+            q_pos_start = to_torch(problems['q_start'], **tensor_args)
+            q_pos_goal = to_torch(problems['q_goal'], **tensor_args)
+            ee_pose_goal = to_torch([[ 1.0000,  0.0000,  0.0000, problems['q_goal'][0]],
+                                [ 0.0000,  1.0000,  0.0000,  problems['q_goal'][1]],
+                                [ 0.0000,  0.0000,  1.0000,  0.0000]],  **tensor_args)
+        else : 
+            q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
 
         print("\n----------------START AND GOAL states----------------")
         print(f"q_pos_start: {q_pos_start}")
@@ -252,9 +264,12 @@ def experiment(
         # Run motion planning inference
         print(f"\n----------------PLAN TRAJECTORIES----------------")
         print(f"Starting inference...")
-
+        map_config = None
         if loaded_map is not None : 
-            map_config = loaded_map[idx_sg]
+            #map_config = loaded_map[idx_sg]
+            map_config = {
+                'scenario_idx' : idx_sample
+            }
 
         if debug_failed and idx_sg in failed_idx : 
             map_config = failed_obj_dict[idx_sg]

@@ -166,6 +166,40 @@ class DynPlanningTask(PlanningTask):
         #     # )
         #     raise NotImplementedError
 
+    def get_trajs_unvalid_and_valid(
+        self, q_trajs, return_indices=False, num_interpolation=0, filter_joint_limits_vel_acc=False, **kwargs
+    ):
+        # Get time steps for the trajectory
+        
+        assert q_trajs.ndim == 3
+        B, H, D = q_trajs.shape
+
+        if kwargs.get('timesteps') == None : 
+            if self.is_dynamic:
+                time_steps_tensor = self._get_timesteps_for_horizon(H)
+                assert time_steps_tensor is not None 
+                kwargs['timesteps'] = time_steps_tensor
+            else : 
+                raise NotImplementedError
+        
+        return super().get_trajs_unvalid_and_valid(
+            q_trajs, return_indices=return_indices, 
+            num_interpolation=num_interpolation, filter_joint_limits_vel_acc=filter_joint_limits_vel_acc, **kwargs)
+
+    def random_coll_free_q_pos(self, n_samples=1, max_samples=1000, max_tries=1000, **kwargs):
+        # Random position in configuration space not in collision
+        # try to sample where it is free for all timesteps
+        if kwargs.get('timesteps') == None : 
+            if self.is_dynamic:
+                time_steps_tensor = self._get_timesteps_for_horizon()
+                assert time_steps_tensor is not None 
+                kwargs['timesteps'] = time_steps_tensor
+            else : 
+                raise NotImplementedError
+
+        return super().random_coll_free_q_pos(self, n_samples=n_samples, 
+                                              max_samples=max_samples, max_tries=max_tries, **kwargs)
+
     def _check_if_dynamic(self):
         """
         Check if environment is dynamic (has time-varying obstacles).
