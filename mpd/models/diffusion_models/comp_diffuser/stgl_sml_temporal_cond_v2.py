@@ -78,6 +78,7 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
         self.resblock_ksize = network_config.get('resblock_ksize', 5) # kernel size for residual block
         self.st_ovlp_model_config = network_config['st_ovlp_model_config']
         self.end_ovlp_model_config = network_config['end_ovlp_model_config']
+        self.drop_context = network_config.get('drop_context', False)
         # self.st_ovlp_model_config['in_dim'] = transition_dim
         # self.ext_cond_dim = network_config['ext_cond_dim']
 
@@ -101,7 +102,7 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
         self.end_inpaint_model = nn.Identity()
         self.inpaint_token_dim = self.network_config['inpaint_token_dim'] ## e.g., 32
         self.inpaint_token_type = self.network_config['inpaint_token_type'] ## e.g., const
-
+        
         if self.context_model and self.context_model.context_model_qs is not None : # no hard conditions
             self.inpaint_token_type ='disabled' 
         
@@ -332,7 +333,7 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
                     assert b_s % 2 == 0
                     st_ovlp_feat[int(b_s//2):] = 0. # * st_ovlp_feat[int(b_s//2):] 
                     end_ovlp_feat[int(b_s//2):] = 0. # * end_ovlp_feat[int(b_s//2):] 
-                    if context_emb is not None : 
+                    if context_emb is not None and self.drop_context : 
                         context_emb[int(b_s//2):] = 0.
 
             ## e.g., B, time_emb_dim+128+128

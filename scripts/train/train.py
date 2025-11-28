@@ -209,12 +209,13 @@ def experiment(
         )
 
         comp_configs = dict(
-            guide_mode = 'default', 
+            guide_mode = kwargs.get('guide_mode', "default"), 
             len_ovlp_cd = kwargs.get('len_ovlap', 4),
             condition_guidance_w = 2.0, # fixed
             tr_inpat_prob = 0.5,
             tr_ovlp_prob = 0.5,
             tr_1side_drop_prob = 0.20,
+            drop_context = kwargs.get('drop_context', False),
             train_st_only = False, 
         )
 
