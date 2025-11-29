@@ -140,24 +140,38 @@ def merge_splines(
     u = final_spl.u
 
     # Take midpoints of spans inside overlap region
-    span_mid = []
-    for j in range(j0 + 3, j0+overlap + 3 ):
-        span_mid.append(0.5*(u[j] + u[j+1]))
-    span_mid = torch.tensor(span_mid, **tensor_args)
-    print(span_mid)
-    # tensor([0.4048, 0.4524, 0.5000, 0.5476, 0.5952, 0.6429]
-    # Select K interior sample points
-    ts = span_mid[1:-1]            # remove extremes
-    ts = ts[:K]                    # pick first K
-    #ts= torch.tensor([ 0.3095, 0.3571, 0.4048, 0.4524, 0.5000, 0.5476, 0.5952], **tensor_args)
-    #ts = torch.tensor([0.4048, 0.5000, 0.5952], **tensor_args)
-    #ts = torch.tensor([0.4048, 0.5952], **tensor_args)
-    print(f'{ts=}')
+    gauss_nodes = [-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)]  # 2-pt Gauss-Legendre on [-1,1]
+    ts_list = []
+    offset = 3
+    for j in range(j0 + offset, j0 + overlap + offset):
+        u0, u1 = u[j], u[j + 1]
+        mid = 0.5 * (u0 + u1)
+        ts_list.append(mid)
+        for gn in gauss_nodes:
+            ts_list.append(0.5 * (u1 - u0) * gn + 0.5 * (u1 + u0))
+    ts = torch.tensor(ts_list, **tensor_args)
+    ts, _ = torch.sort(ts)
+    # span_mid = []
+    # offset = 1
+    # for j in range(j0 + offset, j0+overlap + offset):
+    #     span_mid.append(0.5*(u[j] + u[j+1]))
+    # span_mid = torch.tensor(span_mid, **tensor_args)
+    # print(span_mid)
+    # # # tensor([0.4048, 0.4524, 0.5000, 0.5476, 0.5952, 0.6429]
+    # # # Select K interior sample points
+    # # ts = span_mid[1:-1]            # remove extremes
+    # # ts = ts[:K]                    # pick first K
+    # # #ts= torch.tensor([ 0.3095, 0.3571, 0.4048, 0.4524, 0.5000, 0.5476, 0.5952], **tensor_args)
+    # #ts = torch.tensor([0.4048, 0.4524, 0.5476, 0.5952], **tensor_args)
+    # ts = span_mid
+    # #ts = torch.tensor([0.4048, 0.5952], **tensor_args)
+    # print(f'{ts=}')
     # time grid of merged traj
     Tm = np.linspace(0.0, 1.0, merged_traj.num_T_pts)
 
     # time grid of small traj
     Ts = np.linspace(0.0, 1.0, left_traj.num_T_pts)
+    Ts_r = np.linspace(0.0, 1.0, right_traj.num_T_pts)
 
     # basis support is same for all samples (because join block fixed)
     k_join = j0 + overlap - 1   # last CP in overlap band
@@ -165,7 +179,12 @@ def merge_splines(
 
     # mask for unknown CPs
     mask_block = torch.isin(idx_block, unknown_idx)
-
+    
+    # t0 = u[j0]                  # start of overlap in merged param
+    # t1 = u[j0 + overlap]        # end   of overlap in merged param
+    # # Choose K interior samples in [t0, t1]
+    # ts = np.linspace(t0, t1, K + 2)[1:-1]   # (K points, skipping endpoints)
+    print(f'{ts=}')
     # ----------------------------------------------------------------------
     # 5. Build tall A, b
     # ----------------------------------------------------------------------
@@ -223,16 +242,17 @@ def merge_splines(
 
     # left samples → sample at end of left trajectory
     for t_merged in ts:
-        # map into LEFT phase domain:
-        # t_s_left = (support phase in merged) scaled back to left
-        # t_s_left = t_merged.item() * spans_merge / spans_left
-        k = int(np.searchsorted(u, float(t_merged), side='right') - 1)
-        # map merged span → left local span near the END of left spline
-        t_s_left = 1.0 - (spans_merge - 1 - k) / spans_left
-        t_s_left = float(np.clip(t_s_left, 0.0, 1.0))
+        t_val = float(t_merged)
+        # fraction inside the overlap window on the merged knot vector
+        phi = (t_val - u[j0]) / (u[j0 + overlap] - u[j0])
+        phi = float(np.clip(phi, 0.0, 1.0))
+        # map that fraction onto the left spline's overlap window
+        t_s_left = sml_spl.u[j0] + phi * (sml_spl.u[j0 + overlap] - sml_spl.u[j0])
         # nearest index in left samples
         sl_idx = int(np.abs(Ts - t_s_left).argmin())
         print(Ts[sl_idx], t_s_left )
+        if t_s_left == 1.0 : 
+            continue
         #assert np.abs(Ts[sl_idx] - t_s_left) < 1e-4 
         # reference jets scaled to merged‐time domain
         target_l = {
@@ -244,32 +264,49 @@ def merge_splines(
 
     # right samples → sample at start of right trajectory
     for t_merged in ts:
-        # t_s_right = (t_merged.item() * spans_merge -j0) / spans_left # TODO use spans right
-        # merged span index
-        k = int(np.searchsorted(u, float(t_merged), side='right') - 1)
-        # map merged span → right local span near the START of right spline
-        t_s_right = (k - j0) / spans_left
-        t_s_right = float(np.clip(t_s_right, 0.0, 1.0))
-        sr_idx = int(np.abs(Ts - t_s_right).argmin())
-        print(Ts[sr_idx], t_s_right )
+        t_val = float(t_merged)
+        # fraction inside the overlap window on the merged knot vector
+        phi = (t_val - u[j0]) / (u[j0 + overlap] - u[j0])
+        phi = float(np.clip(phi, 0.0, 1.0))
+        # map that fraction onto the right spline's overlap window
+        r_u = right_traj.bspline.u
+        right_start = r_u[deg]                 # first non-padded knot
+        right_end = r_u[deg + overlap]         # end of overlap support on the right spline
+        print(right_start, right_end)
+        t_s_right = right_start + phi * (right_end - right_start)
+        sr_idx = int(np.abs(Ts_r - t_s_right).argmin())
+        print(Ts_r[sr_idx], t_s_right )
         #assert np.abs(Ts[sr_idx] - t_s_right) < 1e-4
+        if t_s_right == 0.0 : 
+            continue
+        right_scale = right_traj.phase_time.rs[0]
         target_r = {
             "pos": qR["pos"][sr_idx],
-            "vel": qR["vel"][sr_idx] * sml_scale / merge_scale,
-            "acc": qR["acc"][sr_idx] * (sml_scale/merge_scale)**2,
+            "vel": qR["vel"][sr_idx] * right_scale / merge_scale,
+            "acc": qR["acc"][sr_idx] * (right_scale/merge_scale)**2,
         }
         add_constraint_row(t_merged, target_r)
 
     # stack
     A_big = torch.stack(A_list, dim=0)   # (6K*2, 6)
     b_big = torch.stack(b_list, dim=0)   # (6K*2, dim)
-    
+    condA = torch.linalg.cond(A_big).item()
+    print("cond(A) before =", condA)
+    reg_lambda = 1e-3
+    if reg_lambda > 0:
+        reg_w = torch.sqrt(torch.tensor(reg_lambda, **tensor_args))
+        A_reg = torch.eye(overlap, **tensor_args) * reg_w
+        b_reg = merged_cps[unknown_idx] * reg_w
+        A_big = torch.cat([A_big, A_reg], dim=0)
+        b_big = torch.cat([b_big, b_reg], dim=0)
+
     # ----------------------------------------------------------------------
     # 6. Least-squares solve
     # ----------------------------------------------------------------------
     lsq = torch.linalg.lstsq(A_big, b_big)
     x_overlap = lsq.solution   # [6, dim]
-
+    condA = torch.linalg.cond(A_big).item()
+    print("cond(A) after =", condA)
     # write into merged cps
     merged_cps[unknown_idx] = x_overlap
     print(x_overlap)
@@ -287,7 +324,7 @@ def main() :
     #q_trajs_vel_ref = q_trajs_d["vel"]
     #q_trajs_acc_ref = q_trajs_d["acc"]
 
-    task_id = 0
+    task_id = 1
     prob = [[0.0, 0.44], [0.40, 0.84]] # 5 * 0.04 => 0.2 = 6 overlaps
     partial_dur = 5.0 * 0.44 # len 16
 
@@ -320,7 +357,7 @@ def main() :
     q_trajs_acc_ref = q_trajs_d["acc"] * ans_scale * ans_scale # time 
 
 
-    n_ovlp = 4
+    n_ovlp = 6
     spline_l = []
     scipy_l = []
     new_q_cps = []
