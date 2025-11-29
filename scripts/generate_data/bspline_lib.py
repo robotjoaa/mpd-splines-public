@@ -142,13 +142,14 @@ def merge_splines(
     # Take midpoints of spans inside overlap region
     gauss_nodes = [-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)]  # 2-pt Gauss-Legendre on [-1,1]
     ts_list = []
-    offset = 3
-    for j in range(j0 + offset, j0 + overlap + offset):
+    eps = 1e-4 * (u[j0 + overlap] - u[j0])
+    for j in range(j0, j0 + overlap):
         u0, u1 = u[j], u[j + 1]
         mid = 0.5 * (u0 + u1)
-        ts_list.append(mid)
+        ts_list.append(np.clip(mid, u0 + eps, u1 - eps))
         for gn in gauss_nodes:
-            ts_list.append(0.5 * (u1 - u0) * gn + 0.5 * (u1 + u0))
+            ts_span = 0.5 * (u1 - u0) * gn + 0.5 * (u1 + u0)
+            ts_list.append(np.clip(ts_span, u0 + eps, u1 - eps))
     ts = torch.tensor(ts_list, **tensor_args)
     ts, _ = torch.sort(ts)
     # span_mid = []
@@ -191,7 +192,7 @@ def merge_splines(
     A_list = []
     b_list = []
     glob_target_l = []
-    def add_constraint_row(t_sample, target):
+    def add_constraint_row(t_sample, target, weight=1.0):
         """Add pos/vel/acc continuity rows for a single sample."""
         # 1) Find knot span k such that u[k] <= t < u[k+1]
         t_val = float(t_sample)
@@ -235,12 +236,17 @@ def merge_splines(
 
             # b row
             brow = target[key] - fc
-            A_list.append(Arow)
-            b_list.append(brow)
+            A_list.append(Arow * weight)
+            b_list.append(brow * weight)
         
         glob_target_l.append(target['pos'].unsqueeze(0))
 
     # left samples → sample at end of left trajectory
+    u_left_start = sml_spl.u[j0]
+    u_left_end = sml_spl.u[j0 + overlap]
+    u_right_start = right_traj.bspline.u[deg]
+    u_right_end = right_traj.bspline.u[deg + overlap]
+
     for t_merged in ts:
         t_val = float(t_merged)
         # fraction inside the overlap window on the merged knot vector
@@ -248,11 +254,12 @@ def merge_splines(
         phi = float(np.clip(phi, 0.0, 1.0))
         # map that fraction onto the left spline's overlap window
         t_s_left = sml_spl.u[j0] + phi * (sml_spl.u[j0 + overlap] - sml_spl.u[j0])
+        if t_s_left <= u_left_start + eps or t_s_left >= u_left_end - eps:
+            continue
+        w = 0.5 if (phi < 0.1 or phi > 0.9) else 1.0
         # nearest index in left samples
         sl_idx = int(np.abs(Ts - t_s_left).argmin())
         print(Ts[sl_idx], t_s_left )
-        if t_s_left == 1.0 : 
-            continue
         #assert np.abs(Ts[sl_idx] - t_s_left) < 1e-4 
         # reference jets scaled to merged‐time domain
         target_l = {
@@ -260,7 +267,7 @@ def merge_splines(
             "vel": qL["vel"][sl_idx] * sml_scale / merge_scale,
             "acc": qL["acc"][sl_idx] * (sml_scale/merge_scale)**2,
         }
-        add_constraint_row(t_merged, target_l)
+        add_constraint_row(t_merged, target_l, weight=w)
 
     # right samples → sample at start of right trajectory
     for t_merged in ts:
@@ -274,18 +281,19 @@ def merge_splines(
         right_end = r_u[deg + overlap]         # end of overlap support on the right spline
         print(right_start, right_end)
         t_s_right = right_start + phi * (right_end - right_start)
+        if t_s_right <= u_right_start + eps or t_s_right >= u_right_end - eps:
+            continue
+        w = 0.5 if (phi < 0.1 or phi > 0.9) else 1.0
         sr_idx = int(np.abs(Ts_r - t_s_right).argmin())
         print(Ts_r[sr_idx], t_s_right )
         #assert np.abs(Ts[sr_idx] - t_s_right) < 1e-4
-        if t_s_right == 0.0 : 
-            continue
         right_scale = right_traj.phase_time.rs[0]
         target_r = {
             "pos": qR["pos"][sr_idx],
             "vel": qR["vel"][sr_idx] * right_scale / merge_scale,
             "acc": qR["acc"][sr_idx] * (right_scale/merge_scale)**2,
         }
-        add_constraint_row(t_merged, target_r)
+        add_constraint_row(t_merged, target_r, weight=w)
 
     # stack
     A_big = torch.stack(A_list, dim=0)   # (6K*2, 6)
