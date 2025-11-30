@@ -271,6 +271,7 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
             st_ovlp_is_drop = tj_cond['st_ovlp_is_drop']
             end_ovlp_is_drop = tj_cond['end_ovlp_is_drop']
             # assert torch.is_tensor(st_ovlp_is_drop) and torch.is_tensor(end_ovlp_is_drop)
+            force_zero_end_ovlp = tj_cond.get('force_zero_end_ovlp', False)
 
             if st_ovlp_is_drop is not None: ##
                 st_ovlp_feat = self.st_ovlp_model(tj_cond['st_ovlp_traj'], 
@@ -287,7 +288,9 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
                 st_ovlp_feat = torch.zeros( (x.shape[0], self.st_ovlp_model.out_dim), device=x.device)
 
             
-            if tj_cond['end_ovlp_is_drop'] is not None:
+            if force_zero_end_ovlp:
+                end_ovlp_feat = torch.zeros((x.shape[0], self.end_ovlp_model.out_dim), device=x.device)
+            elif tj_cond['end_ovlp_is_drop'] is not None:
                 end_ovlp_feat = self.end_ovlp_model(tj_cond['end_ovlp_traj'],
                                                     time=tj_cond['end_ovlp_t'])
                 end_ovlp_feat[ tj_cond['end_ovlp_is_drop'] ] = 0.

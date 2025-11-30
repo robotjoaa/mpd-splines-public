@@ -24,6 +24,8 @@ from mpd.models.diffusion_models.sample_functions import (
 
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import to_numpy, to_torch, clip_grad_by_norm, clip_grad_by_value
+from comp_diffuser import utils
+from comp_diffuser import Traj_Blender
 
 def make_timesteps(batch_size, i, device):
     t = torch.full((batch_size,), i, device=device, dtype=torch.long)
@@ -118,6 +120,7 @@ class CompDiffusionModel(nn.Module, ABC):
 
         ### for compose 
         self.comp_config = comp_config
+        self.is_spline = comp_config.get('is_spline', False)
         self.use_ddim = True
         self.guide_mode = comp_config.get('guide_mode', 'default') # default (cg), cfg, hybrid
         self.len_overlap = self.comp_config['len_ovlp_cd']
@@ -134,8 +137,17 @@ class CompDiffusionModel(nn.Module, ABC):
         # self.tr_no_ovlp_none = self.comp_config.get('tr_no_ovlp_none', False)
         print_color(f"{self.train_st_only=}")
         assert self.tr_inpat_prob + self.tr_ovlp_prob == 1.0
-        # self.blend_type = "exponential"
-        # self.blend_beta = 3
+        
+        self.blend_type = comp_config.get('blend_type',"exponential")
+        self.blend_beta = comp_config.get('blend_beta',3)
+
+        self.tj_blder = Traj_Blender(
+            self.horizon,
+            self.len_ovlp_cd,
+            self.is_spline,
+            self.blend_type,
+            exp_beta = self.blend_beta
+        )
 
     # ------------------------------------------ sampling ------------------------------------------#
     def predict_noise_from_start(self, x_t, t_2d, x0):
@@ -369,6 +381,7 @@ class CompDiffusionModel(nn.Module, ABC):
         ddim_scale_grad_prior=1.0,
         compute_costs_with_xrecon=False,
         results_ns=None,
+        cfg_zero_end_ovlp=False,
         **sample_kwargs,
     ):
         # Adapted from https://github.com/ezhang7423/language-control-diffusion/blob/63cdafb63d166221549968c662562753f6ac5394/src/lcd/models/diffusion.py#L226
@@ -440,6 +453,7 @@ class CompDiffusionModel(nn.Module, ABC):
                     compute_costs_with_xrecon=compute_costs_with_xrecon,
                     results_ns=results_ns,
                     g_cond=g_cond,
+                    cfg_zero_end_ovlp=cfg_zero_end_ovlp,
                     **sample_kwargs,
                 )
             if return_chain_x_recon : 
@@ -485,6 +499,7 @@ class CompDiffusionModel(nn.Module, ABC):
         compute_costs_with_xrecon=False,
         results_ns=None,
         g_cond=None,
+        cfg_zero_end_ovlp=False,
         **sample_kwargs,
     ) : 
 
@@ -499,6 +514,8 @@ class CompDiffusionModel(nn.Module, ABC):
 
             if self.guide_mode != "default" and tj_cond['do_cond']: # cfg
                 x_2, t_2d_2, tj_cond_2 = batch_repeat_tensor_in_dict(x, t, tj_cond, n_rp=2)
+                if cfg_zero_end_ovlp:
+                    tj_cond_2['force_zero_end_ovlp'] = True
                 assert (t_2d_2[0] == t_2d_2[0,0]).all(), 'sanity check'
                 t_1d_2 = t_2d_2[:, 0]
                 out = self.model(x_2, t_1d_2, tj_cond_2, force_dropout=True, half_fd=True)
@@ -547,8 +564,11 @@ class CompDiffusionModel(nn.Module, ABC):
                     if compute_costs_with_xrecon:
                         raise NotImplementedError("compute_costs_with_xrecon is not implemented")
                     else:
-                        #grad_guide = guide(x, context_d=context_d)
-                        grad_guide = guide(x, tj_cond) # tj_cond must include time range for guidance, g_cond
+                        assert 'context_d' in tj_cond and 'timesteps' in tj_cond
+                        context_d = tj_cond['context_d']
+                        timesteps = tj_cond['timesteps']
+                        # if guide is not none, it must have timestep
+                        grad_guide = guide(x, context_d, timestep= timesteps) # tj_cond must include time range for guidance, g_cond
 
                     grad_guide_clipped = clip_grad_fn(grad_guide)
                     grad_guide_clipped_weighted = guide_lr * grad_guide_clipped
@@ -621,7 +641,14 @@ class CompDiffusionModel(nn.Module, ABC):
                 **diffusion_kwargs,
             )
         else :
-            raise NotImplementedError
+            # need n_comps in kwargs
+            sample = self.gen_cond_stgl(g_cond, 
+                                        context_d, 
+                                        batch_size=n_samples,
+                                        debug=False,
+                                        **diffusion_kwargs,
+                                        )
+            return sample
 
         # chain: [ n_samples x (n_diffusion_steps + 1) x horizon x (state_dim)]
         # extract normalized trajectories
@@ -1012,6 +1039,142 @@ class CompDiffusionModel(nn.Module, ABC):
 
         return x_et, tj_cond
 
+    def gen_cond_stgl(self, 
+                      g_cond, 
+                      context_d,
+                      batch_size=1,
+                      n_comp=1,
+                      horizon=None,
+                      return_chain=True,
+                      pick_type="first",
+                      top_n=1, 
+                      debug = False,
+                      results_ns = None,
+                      **diffusion_kwargs):
+        """
+        Jan 21: Default Version that Support Replan
+        st_gl: *not normed*, np2d [2, ndim], e.g., [ [st], [end] ], [[2,1], [3,4]],
+        b_s: batch_size, 10-20+
+        """
+        
+        hzn = horizon if horizon else self.horizon 
+        o_dim = self.state_dim
+        c_shape = [batch_size, hzn, o_dim] ## e.g.,(20,160,2)
+        
+        # pdb.set_trace() ## check format
+
+        st_gl = g_cond['st_gl']
+
+        ## shape: 2, n_probs, dim
+        # assert st_gl.ndim == 3 and st_gl.shape[0] == 2
+        
+        ## make sure return is not a view
+        hard_conds = {}
+        if st_gl :
+            for k,v in st_gl.items() : 
+                assert v.ndim == 2
+                hard_conds[k] = einops.repeat(v, 'n_p d -> (n_p rr) d', rr=batch_size).clone()
+
+            # could have multiple hard_conds 
+            # ex) 0, 1, 2 / hzn-2, hzn-1, hzn 
+
+            # hard_cond = {
+            #     0: einops.repeat(st_gl[0,:,:], 'n_p d -> (n_p rr) d', rr=b_s).clone(),
+            #     hzn-1: einops.repeat(st_gl[1,:,:], 'n_p d -> (n_p rr) d', rr=b_s).clone(),
+            # }
+
+        #cur_time = time.time()
+
+        ## Run GPU Planning, x_dfu_all
+        ## a list of len n_comp, elem: cuda tensor (B,sm_hzn,dim)
+        # comp_pred_p_loop_n(self, ##
+        #                 shape,  # (batch_size, horizon)
+        #                 context_d,  
+        #                 hard_conds,
+        #                 n_comp,
+        #                 return_chain=False,
+        #                 ddim_eta=0.0,
+        #                 ddim_skip_type = "uniform",
+        #                 ddim_sampling_timesteps = None, 
+        #                 t_start_guide = torch.inf,
+        #                 n_diffusion_steps_without_noise = 0,
+        #                 guide = None,
+        #                 results_ns=None,
+        #                 **sample_kwargs)
+        if return_chain : 
+            trajs_list, chain = self.comp_pred_p_loop_n(
+                c_shape, context_d, hard_conds, n_comp=n_comp, return_chain=True, 
+                results_ns = results_ns, **diffusion_kwargs)
+        else : 
+            trajs_list = self.comp_pred_p_loop_n(
+                c_shape, context_d, hard_conds, n_comp=n_comp, return_chain=False, 
+                results_ns = results_ns, **diffusion_kwargs)
+        
+
+        # if self.cp_infer_t_type == 'interleave': ## original our
+        #     trajs_list = self.diffusion_model.comp_pred_p_loop_n(
+        #         c_shape, stgl_cond, n_comp=self.n_comp, return_diffusion=False)
+        
+        # elif self.cp_infer_t_type == 'same_t': ## Same t denoising, but not parallel
+        #     trajs_list = self.diffusion_model.comp_pred_p_loop_n_same_t(
+        #         c_shape, stgl_cond, n_comp=self.n_comp, return_diffusion=False)
+            
+        # elif self.cp_infer_t_type == 'gsc': ## baseline
+        #     trajs_list = self.diffusion_model.comp_pred_p_loop_n_GSC(
+        #         c_shape, stgl_cond, n_comp=self.n_comp, return_diffusion=False)
+        
+        # elif self.cp_infer_t_type == 'same_t_p': ## Same t denoising and *parallel*
+        #     trajs_list = self.diffusion_model.comp_pred_p_loop_n_same_t_parallel(
+        #         c_shape, stgl_cond, n_comp=self.n_comp, return_diffusion=False)
+        
+        # elif self.cp_infer_t_type == 'ar_back': ## backward autoregressive denosing
+        #     trajs_list = self.diffusion_model.comp_pred_p_loop_n_ar_backward(
+        #         c_shape, stgl_cond, n_comp=self.n_comp, return_diffusion=False)
+        
+        # else:
+        #     raise NotImplementedError
+        
+        #self.ncp_pred_time_list.append( [self.n_comp,  time.time() - cur_time] ) ## unit: sec
+        
+        ## note that we can return a lof of stuff
+        ## get unnormed numpy list, same format (unnormalized after this output)
+        # trajs_list_np_un = utils.get_np_trajs_list(trajs_list, do_unnorm=True, 
+        #                                            normalizer=self.normalizer)
+        
+        ## TODO : implement below in torch 
+        ## ranking of all the traj candiates based on the distance of ovlp parts
+        s_idxs, dist_per_sam = utils.compute_ovlp_dist(trajs_list, 
+                                                       self.len_ovlp_cd)
+        
+        ## list, pick out the topn, from un-normed traj
+        trajs_list_topn = utils.pick_top_n_trajs(trajs_list, s_idxs, top_n)
+        ## np, un-normed, shape (B, tot_hzn, dim)
+        trajs_list_topn_bl = self.tj_blder.blend_traj_lists(trajs_list_topn)
+
+        ## pick one traj to execute
+        if pick_type == 'first':
+            pick_traj = trajs_list_topn_bl[0]
+        elif pick_type == 'rand':
+            p_idx = np.random.randint(low=0, high=top_n)
+            pick_traj = trajs_list_topn_bl[p_idx]
+        else:
+            raise NotImplementedError
+        
+        if results_ns : 
+            results_ns.update(
+                trajs_list_topn_bl = trajs_list_topn_bl,
+                trajs_list = trajs_list 
+            )
+            if return_chain :
+                results_ns.update(
+                    trajs_list_iter = chain
+                )
+            
+        # if return_chain : # return chains for trajectory before merging is meaningless
+
+        return pick_traj
+
+
     @torch.no_grad()
     def comp_pred_p_loop_n(self, ##
                         shape,  # (batch_size, horizon)
@@ -1019,18 +1182,16 @@ class CompDiffusionModel(nn.Module, ABC):
                         hard_conds,
                         n_comp,
                         return_chain=False,
-                        return_chain_x_recon=False,
                         ddim_eta=0.0,
                         ddim_skip_type = "uniform",
                         ddim_sampling_timesteps = None, 
                         t_start_guide = torch.inf,
                         n_diffusion_steps_without_noise = 0,
                         guide = None,
-                        return_diffusion=False,
                         results_ns=None,
                         **sample_kwargs):
         """assume compose n trajectories"""
-        assert n_comp >= 2 
+        # assert n_comp >= 2 
         device = self.betas.device
 
         batch_size = shape[0]
@@ -1040,7 +1201,7 @@ class CompDiffusionModel(nn.Module, ABC):
 
         x_dfu_all = [x_p_list,]
 
-        assert len(hard_conds[0]) == shape[0]
+        # assert len(hard_conds[0]) == shape[0]
 
         if self.use_ddim:
             sampling_timesteps = ddim_sampling_timesteps if ddim_sampling_timesteps is not None else self.n_diffusion_steps
@@ -1050,6 +1211,10 @@ class CompDiffusionModel(nn.Module, ABC):
         else:
             raise NotImplementedError
         ## -----------------
+
+        # get timestep for each composite trajectory
+        timesteps_l = self.get_comp_timestep(n_comp) # length n_comp 
+
 
         from tqdm import tqdm
         for k_step, (_time, _time_next) in enumerate(time_pairs):
@@ -1088,7 +1253,7 @@ class CompDiffusionModel(nn.Module, ABC):
                         )
                     
                     tj_cond_p_i['do_cond'] = False # True
-
+                    tj_cond_p_i['timesteps'] = timesteps_l[i_tj]
                     # if self.use_ddim:
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
                                 sampling_timesteps=sampling_timesteps,
@@ -1172,7 +1337,7 @@ class CompDiffusionModel(nn.Module, ABC):
                             ) 
                     x_p_list[i_tj] = x_p_i
             
-            if return_diffusion:
+            if return_chain:
                 x_dfu_all.append([_ for _ in x_p_list])
 
 
@@ -1184,10 +1349,12 @@ class CompDiffusionModel(nn.Module, ABC):
         x_p_list[0] = apply_hard_conditioning(x_p_list[0],st_cond)
         x_p_list[-1] = apply_hard_conditioning(x_p_list[-1],end_cond)
 
-        ### TODO : change to return_chain, return_x_recons
-        if return_diffusion:
+        if return_chain:
             ## _, a list of x_p_list
             return x_p_list, x_dfu_all
         else:
             return x_p_list
         
+
+    def get_comp_timestep(self, n_comp) : 
+        return [(0, 4), (3,7), (6,10)]

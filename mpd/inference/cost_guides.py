@@ -206,6 +206,7 @@ class CostGuideManagerParametricTrajectory:
                         jacs_spatial_th,
                         link_poses_th_ee,
                         jacs_spatial_th_ee,
+                        **kwargs,
                     )
                 )
 
@@ -644,7 +645,8 @@ class CostTaskSpaceCollisionObjects(CostTaskSpace):
         # C, dC/dx
         # cost (and gradient) of q trajectory in phase space
         # derivative of eq. 28 wrt control points -- https://arxiv.org/pdf/2412.19948
-        cost, grad_cost_wrt_x = self.collision_objects_field.compute_distance_field_cost_and_gradient(x_positions)
+        # add kwargs for timestep argument
+        cost, grad_cost_wrt_x = self.collision_objects_field.compute_distance_field_cost_and_gradient(x_positions, **kwargs)
 
         # (dx/dq)^T @ dC/dx (jacobian transpose x task space error)
         # map jacobian from world (spatial) to local world aligned using the adjoint
