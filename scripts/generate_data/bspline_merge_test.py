@@ -197,7 +197,8 @@ def remove_knot(t, c, k, u, tol=1e-10):
     # print(R[11:21]) # 15, 16, 17, 18, 19
     # print(r_first, r_last) # r_first 16 / r_last 21
     # print(L[r_first + 1 - (k-1)], R[r_last + 1 - (k-1)]) # r_first + 1 - (k-1)
-    
+    import pdb
+    pdb.set_trace()
     if not np.allclose(L[r_first + 1 - (k-1)], R[r_last + 1 - (k-1)], atol=tol):
         raise ValueError("knot removal changes the curve")
     if c.ndim == 1:

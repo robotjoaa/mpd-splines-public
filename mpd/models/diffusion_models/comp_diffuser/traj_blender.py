@@ -1,97 +1,97 @@
 import numpy as np
-import diffuser.utils as utils
-from diffuser.models.cd_stgl_sml_dfu import Stgl_Sml_GauDiffusion_InvDyn_V1
-from diffuser.datasets.normalization import DatasetNormalizer
+# import diffuser.utils as utils
+# from diffuser.models.cd_stgl_sml_dfu import Stgl_Sml_GauDiffusion_InvDyn_V1
+# from diffuser.datasets.normalization import DatasetNormalizer
 
-class Traj_Blender:
-    def __init__(self, diffusion: Stgl_Sml_GauDiffusion_InvDyn_V1, 
-                        normalizer: DatasetNormalizer,
-                        blend_type: str,
-                        exp_beta=3,
-                        ):
-        self.exp_beta = exp_beta
-        self.diffusion = diffusion
-        self.blend_type = blend_type
-        self.len_ovlp = self.diffusion.len_ovlp_cd
-        self.hzn_step_size = self.diffusion.horizon - self.len_ovlp
-        self.hzn = self.diffusion.horizon
-        self.gap_len = self.hzn - 2 * self.len_ovlp
-        self.normalizer = normalizer
-        assert self.gap_len > 0
+# class Traj_Blender:
+#     def __init__(self, diffusion: Stgl_Sml_GauDiffusion_InvDyn_V1, 
+#                         normalizer: DatasetNormalizer,
+#                         blend_type: str,
+#                         exp_beta=3,
+#                         ):
+#         self.exp_beta = exp_beta
+#         self.diffusion = diffusion
+#         self.blend_type = blend_type
+#         self.len_ovlp = self.diffusion.len_ovlp_cd
+#         self.hzn_step_size = self.diffusion.horizon - self.len_ovlp
+#         self.hzn = self.diffusion.horizon
+#         self.gap_len = self.hzn - 2 * self.len_ovlp
+#         self.normalizer = normalizer
+#         assert self.gap_len > 0
 
-    def blend_traj_lists(self, trajs_list, do_unnorm):
-        """
-        trajs_list: list of len n_comp: [ (B,H,D),..., ]
-        returns:
-            - trajs_out: a list of [tot_hzn, dim]
-        """
-        ## to np and unnorm
-        trajs_list = utils.get_np_trajs_list(trajs_list, do_unnorm=do_unnorm, 
-                                             normalizer=self.normalizer)
+#     def blend_traj_lists(self, trajs_list, do_unnorm):
+#         """
+#         trajs_list: list of len n_comp: [ (B,H,D),..., ]
+#         returns:
+#             - trajs_out: a list of [tot_hzn, dim]
+#         """
+#         ## to np and unnorm
+#         trajs_list = utils.get_np_trajs_list(trajs_list, do_unnorm=do_unnorm, 
+#                                              normalizer=self.normalizer)
 
-        n_comp = len(trajs_list)
-        b_s,_, dd = trajs_list[0].shape ## b h d
+#         n_comp = len(trajs_list)
+#         b_s,_, dd = trajs_list[0].shape ## b h d
 
-        tot_hzn = n_comp * self.diffusion.horizon - \
-                    (n_comp - 1) * self.diffusion.len_ovlp_cd
+#         tot_hzn = n_comp * self.diffusion.horizon - \
+#                     (n_comp - 1) * self.diffusion.len_ovlp_cd
         
-        print(f'{tot_hzn=}')
-        # trajs_out = np.zeros( shape=(b_s, tot_hzn, dd) ) ## NOTE: default is float64
-        trajs_out = np.zeros( shape=(b_s, tot_hzn, dd), dtype=np.float32 ) ## Dec 2: changed to float32
-        cnt_v = np.zeros_like(trajs_out)
-        ## copy non-ovlp parts
-        for i_c in range(n_comp):
-            tjs_p_i = trajs_list[i_c]
+#         print(f'{tot_hzn=}')
+#         # trajs_out = np.zeros( shape=(b_s, tot_hzn, dd) ) ## NOTE: default is float64
+#         trajs_out = np.zeros( shape=(b_s, tot_hzn, dd), dtype=np.float32 ) ## Dec 2: changed to float32
+#         cnt_v = np.zeros_like(trajs_out)
+#         ## copy non-ovlp parts
+#         for i_c in range(n_comp):
+#             tjs_p_i = trajs_list[i_c]
 
-            if i_c == 0:
-                tmp_idx_1 = 0
-                tmp_idx_2 = self.hzn_step_size
-                ## B,hstep,dim
-                trajs_out[:, tmp_idx_1:tmp_idx_2, :] = tjs_p_i[:, :self.hzn_step_size, :]
-            elif i_c < n_comp - 1:
-                tmp_idx_1 = self.hzn + (i_c - 1) * self.hzn_step_size
-                tmp_idx_2 = tmp_idx_1 + self.gap_len
-                trajs_out[:, tmp_idx_1:tmp_idx_2, :] = tjs_p_i[:, self.len_ovlp:self.len_ovlp+self.gap_len, :]
+#             if i_c == 0:
+#                 tmp_idx_1 = 0
+#                 tmp_idx_2 = self.hzn_step_size
+#                 ## B,hstep,dim
+#                 trajs_out[:, tmp_idx_1:tmp_idx_2, :] = tjs_p_i[:, :self.hzn_step_size, :]
+#             elif i_c < n_comp - 1:
+#                 tmp_idx_1 = self.hzn + (i_c - 1) * self.hzn_step_size
+#                 tmp_idx_2 = tmp_idx_1 + self.gap_len
+#                 trajs_out[:, tmp_idx_1:tmp_idx_2, :] = tjs_p_i[:, self.len_ovlp:self.len_ovlp+self.gap_len, :]
                 
-            elif i_c == n_comp - 1:
-                tmp_idx_1 = self.hzn + (i_c - 1) * self.hzn_step_size
-                tmp_idx_2 = tmp_idx_1 + self.hzn_step_size
+#             elif i_c == n_comp - 1:
+#                 tmp_idx_1 = self.hzn + (i_c - 1) * self.hzn_step_size
+#                 tmp_idx_2 = tmp_idx_1 + self.hzn_step_size
 
-                assert tmp_idx_2 == tot_hzn
-                trajs_out[:, tmp_idx_1:tmp_idx_2, :] = tjs_p_i[:, self.len_ovlp:, :]
+#                 assert tmp_idx_2 == tot_hzn
+#                 trajs_out[:, tmp_idx_1:tmp_idx_2, :] = tjs_p_i[:, self.len_ovlp:, :]
 
-            cnt_v[ :, tmp_idx_1:tmp_idx_2, : ] += 1
-            utils.print_color(f'{i_c=} {tmp_idx_1=}, {tmp_idx_2=}, {tot_hzn=}')
+#             cnt_v[ :, tmp_idx_1:tmp_idx_2, : ] += 1
+#             utils.print_color(f'{i_c=} {tmp_idx_1=}, {tmp_idx_2=}, {tot_hzn=}')
 
-        ## handle and merge the ovlp parts
-        for i_c in range(n_comp-1):
-            tmp_idx_1 = (i_c + 1) * self.hzn_step_size
-            tmp_idx_2 = tmp_idx_1 + self.len_ovlp
+#         ## handle and merge the ovlp parts
+#         for i_c in range(n_comp-1):
+#             tmp_idx_1 = (i_c + 1) * self.hzn_step_size
+#             tmp_idx_2 = tmp_idx_1 + self.len_ovlp
 
-            ## b,sm_hzn,d
-            tjs_p_i = trajs_list[i_c]
-            _, end_tjs_i = self.diffusion.extract_ovlp_from_full(tjs_p_i)
-            ## b,sm_hzn,d
-            tjs_p_i_plus_1 = trajs_list[i_c+1]
-            st_tjs_i_plus_1, _ = self.diffusion.extract_ovlp_from_full(tjs_p_i_plus_1)
-
-
-            ## b,len_o,d
-            trajs_blend = blend_2_np_trajs_23d(end_tjs_i, st_tjs_i_plus_1, 
-                                               self.blend_type, self.exp_beta)
-
-            trajs_out[:, tmp_idx_1:tmp_idx_2, :] = trajs_blend
-            cnt_v[:, tmp_idx_1:tmp_idx_2, :] += 1
-
-            utils.print_color(f'{i_c=} {tmp_idx_1=}, {tmp_idx_2=}')
-        assert tmp_idx_2 == (tot_hzn - self.hzn_step_size)
+#             ## b,sm_hzn,d
+#             tjs_p_i = trajs_list[i_c]
+#             _, end_tjs_i = self.diffusion.extract_ovlp_from_full(tjs_p_i)
+#             ## b,sm_hzn,d
+#             tjs_p_i_plus_1 = trajs_list[i_c+1]
+#             st_tjs_i_plus_1, _ = self.diffusion.extract_ovlp_from_full(tjs_p_i_plus_1)
 
 
-        assert (cnt_v == 1).all()
+#             ## b,len_o,d
+#             trajs_blend = blend_2_np_trajs_23d(end_tjs_i, st_tjs_i_plus_1, 
+#                                                self.blend_type, self.exp_beta)
+
+#             trajs_out[:, tmp_idx_1:tmp_idx_2, :] = trajs_blend
+#             cnt_v[:, tmp_idx_1:tmp_idx_2, :] += 1
+
+#             utils.print_color(f'{i_c=} {tmp_idx_1=}, {tmp_idx_2=}')
+#         assert tmp_idx_2 == (tot_hzn - self.hzn_step_size)
+
+
+#         assert (cnt_v == 1).all()
 
         
 
-        return trajs_out
+#         return trajs_out
 
 
 
