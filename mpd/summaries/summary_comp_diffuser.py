@@ -6,15 +6,9 @@ import wandb
 from matplotlib.collections import LineCollection
 
 from mpd.summaries.summary_base import SummaryBase
-from mpd.models.diffusion_models.sample_functions import apply_hard_conditioning
+from mpd.models.diffusion_models.sample_functions import apply_hard_conditioning, apply_dict
 from torch_robotics.trajectory.metrics import compute_ee_pose_errors
 from torch_robotics.torch_utils.torch_utils import to_torch, dict_to_device, DEFAULT_TENSOR_ARGS
-
-def apply_dict(fn, d, *args, **kwargs):
-	return {
-		k: fn(v, *args, **kwargs)
-		for k, v in d.items()
-	}
 
 class SummaryCompDiffuser(SummaryBase):
 

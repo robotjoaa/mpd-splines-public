@@ -66,9 +66,11 @@ class ParametricTrajectoryBase(abc.ABC):
         **kwargs,
     ):
         q_pos_start, q_pos_goal = self.get_q_pos_start_q_goal(q_pos_start, q_pos_goal)
-
+        print(f"before augment : {q_control_points.shape}")
         q_control_points = self.augment_control_points_fn(q_control_points, q_pos_start, q_pos_goal)
+        print(f"after augment : {q_control_points.shape}")
         q_control_points = self.preprocess_control_points(q_control_points)
+        print(f"after preprocess : {q_control_points.shape}")
         if q_control_points.ndim < 2:
             raise NotImplementedError
 

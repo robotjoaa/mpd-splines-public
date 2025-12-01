@@ -79,7 +79,7 @@ def pick_top_n_trajs(trajs_list, s_idxs, top_n, ):
     return trajs_list_topn
 
 
-# def get_np_trajs_list(trajs_list, do_unnorm, normalizer):
+# def get_np_trajs_list(trajs_list):
 #     num_tj = len(trajs_list)
 #     ## to numpy
 #     trajs_list = [ to_np(trajs) for trajs in trajs_list ]

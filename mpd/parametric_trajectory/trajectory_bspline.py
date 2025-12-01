@@ -48,18 +48,41 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
         self.remove_outer_control_points = remove_outer_control_points
         self.keep_last_control_point = keep_last_control_point
 
+        ### used for comp diffuser
+        # None if not comp, True : start segment, False : end segment 
+        self.remove_from_start_control_points = kwargs.get('remove_from_start_control_points', None)
+
     def remove_control_points_fn(self, cps):
         # Remove the first and last control points in position, velocity and acceleration
         # keep the last control point if we condition on the ee pose goal
+    
         last_control_point = cps[..., -1, :].clone()
         if self.remove_outer_control_points:
-            cps = cps[..., 1:-1, :]
-            if self.zero_vel_at_start_and_goal:
+            if self.remove_from_start_control_points is None : 
                 cps = cps[..., 1:-1, :]
-            if self.zero_acc_at_start_and_goal:
-                cps = cps[..., 1:-1, :]
-            if self.keep_last_control_point:
-                cps = torch.cat((cps, last_control_point[..., None, :]), dim=-2)
+                if self.zero_vel_at_start_and_goal:
+                    cps = cps[..., 1:-1, :]
+                if self.zero_acc_at_start_and_goal:
+                    cps = cps[..., 1:-1, :]
+                if self.keep_last_control_point:
+                    cps = torch.cat((cps, last_control_point[..., None, :]), dim=-2)
+            
+            elif self.remove_from_start_control_points == True : 
+                cps = cps[..., 1:, :]
+                if self.zero_vel_at_start_and_goal:
+                    cps = cps[..., 1:, :]
+                if self.zero_acc_at_start_and_goal:
+                    cps = cps[..., 1:, :]
+
+            else : 
+                cps = cps[..., :-1, :]
+                if self.zero_vel_at_start_and_goal:
+                    cps = cps[..., :-1, :]
+                if self.zero_acc_at_start_and_goal:
+                    cps = cps[..., :-1, :]
+                if self.keep_last_control_point:
+                    cps = torch.cat((cps, last_control_point[..., None, :]), dim=-2)
+
         return cps
 
     def augment_control_points_fn(self, control_points, q_pos_start=None, q_pos_goal=None):
@@ -83,28 +106,63 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
         control_points_augmented = control_points.clone()
         if self.remove_outer_control_points:
             # add control points in between the initial and goal states
-            if self.zero_acc_at_start_and_goal:
+            if self.remove_from_start_control_points is None : 
+                if self.zero_acc_at_start_and_goal:
+                    if self.keep_last_control_point:
+                        control_points_augmented = torch.cat(
+                            [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
+                        ) # +1 
+                    else:
+                        control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
+                        # +2 
+
+                if self.zero_vel_at_start_and_goal:
+                    if self.keep_last_control_point:
+                        control_points_augmented = torch.cat(
+                            [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
+                        ) # + 2 
+                    else:
+                        control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
+                        # + 2
                 if self.keep_last_control_point:
                     control_points_augmented = torch.cat(
                         [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
-                    )
+                    ) # +2
                 else:
                     control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
+                
+            elif self.remove_from_start_control_points == True :
+                if self.zero_acc_at_start_and_goal:
+                    control_points_augmented = torch.cat([q_pos_start, control_points_augmented], dim=-2)
 
-            if self.zero_vel_at_start_and_goal:
+                if self.zero_vel_at_start_and_goal:
+                    control_points_augmented = torch.cat([q_pos_start, control_points_augmented], dim=-2)
+
+                control_points_augmented = torch.cat([q_pos_start, control_points_augmented], dim=-2)
+            
+            else : 
+                if self.zero_acc_at_start_and_goal:
+                    if self.keep_last_control_point:
+                        control_points_augmented = torch.cat(
+                            [control_points_augmented, last_inner_control_point], dim=-2
+                        )
+                    else:
+                        control_points_augmented = torch.cat([control_points_augmented, q_pos_goal], dim=-2)
+
+                if self.zero_vel_at_start_and_goal:
+                    if self.keep_last_control_point:
+                        control_points_augmented = torch.cat(
+                            [control_points_augmented, last_inner_control_point], dim=-2
+                        )
+                    else:
+                        control_points_augmented = torch.cat([control_points_augmented, q_pos_goal], dim=-2)
+
                 if self.keep_last_control_point:
                     control_points_augmented = torch.cat(
-                        [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
+                        [control_points_augmented, last_inner_control_point], dim=-2
                     )
                 else:
-                    control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
-
-            if self.keep_last_control_point:
-                control_points_augmented = torch.cat(
-                    [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
-                )
-            else:
-                control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
+                    control_points_augmented = torch.cat([control_points_augmented, q_pos_goal], dim=-2)
 
         return control_points_augmented
 

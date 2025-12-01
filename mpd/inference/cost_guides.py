@@ -16,7 +16,7 @@ from torch.func import vmap, jacrev, functional_call
 
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_numpy
 from torch_robotics.visualizers.plot_utils import create_fig_and_axes
-
+import copy 
 
 def project_hierarchical_gradients_fast(grads):
     """
@@ -368,6 +368,12 @@ class CostSpace:
         self.robot = planning_task.robot
         self.env = planning_task.env
         self.tensor_args = tensor_args
+    
+    def update_parametric_trajectory(self, current_traj) : 
+        if current_traj is None : 
+            self.parametric_trajectory = self.planning_task.parametric_trajectory
+        else :
+            self.parametric_trajectory = current_traj
 
     def compute_cost_grad_wrt_cp(self, *args, **kwargs):
         raise NotImplementedError

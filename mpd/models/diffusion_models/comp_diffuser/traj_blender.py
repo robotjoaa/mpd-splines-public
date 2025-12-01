@@ -1,11 +1,11 @@
 import torch
 import numpy as np
 
-from mpd.models.diffusion_models import CompDiffusionModel
+#from mpd.models.diffusion_models import CompDiffusionModel
 from mpd.models.diffusion_models.helpers import (
     print_color,
 )
-from comp_diffuser.utils import extract_ovlp_from_full
+from .utils import extract_ovlp_from_full
 from torch_robotics.torch_utils.torch_utils import to_numpy, to_torch
 
 class Traj_Blender:

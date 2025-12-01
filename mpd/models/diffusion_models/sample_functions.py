@@ -12,6 +12,11 @@ def extract(a, t, x_shape):
     out = a.gather(-1, t)
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
+def apply_dict(fn, d, *args, **kwargs):
+	return {
+		k: fn(v, *args, **kwargs)
+		for k, v in d.items()
+	}
 
 def apply_hard_conditioning(x, conditions):
     for k, v in conditions.items():

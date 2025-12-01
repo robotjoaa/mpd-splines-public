@@ -64,6 +64,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
         if not isinstance(df_obj_list, list):
             df_obj_list = [df_obj_list]
 
+        # import pdb; pdb.set_trace()
         # Get timesteps if not provided
         if timesteps is None:
             if self.parametric_trajectory is None:
@@ -97,8 +98,15 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
         # Expand timesteps to match batch dimension
         if timesteps.ndim == 1:
             # timesteps shape: (horizon,) -> (batch, horizon) -> (batch*horizon,)
+            if len(timesteps) > horizon : 
+                # subsample
+                indices = torch.linspace(0, len(timesteps) - 1, horizon).long()
+                timesteps = timesteps[indices]
+            
             timesteps_expanded = timesteps.unsqueeze(0).expand(batch_size, horizon)
             timesteps_flat = einops.rearrange(timesteps_expanded, "b h -> (b h)")
+
+            
         else:
             # timesteps shape: (batch, horizon) -> (batch*horizon,)
             timesteps_flat = einops.rearrange(timesteps, "b h -> (b h)")

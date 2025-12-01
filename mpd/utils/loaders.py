@@ -114,7 +114,6 @@ def get_planning_task_and_dataset(
     )
 
     if "ParametricTrajectoryBspline" in parametric_trajectory_class:
-        # Construct the B-spline trajectory
         parametric_trajectory = ParametricTrajectoryBspline(
             n_control_points=bspline_n_control_points,
             degree=bspline_degree,
@@ -128,6 +127,7 @@ def get_planning_task_and_dataset(
             phase_time_args=phase_time_args,
             tensor_args=tensor_args,
         )
+
         dataset_class = TrajectoryDatasetBspline
 
     elif "ParametricTrajectoryWaypoints" in parametric_trajectory_class:

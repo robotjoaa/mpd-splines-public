@@ -353,7 +353,11 @@ class Unet1D_TjTi_Stgl_Cond_V2(nn.Module):
                 
         else :
             b_size = x.shape[0]
-            t_feat = torch.randn(b_size, self.tot_cond_dim , device=x.device)
+            assert self.state_dim == x.shape[-1]
+            # t_feat : b cond
+            
+            x = einops.rearrange(x, 'b h t -> b t h')
+            t_feat = torch.randn((b_size, self.tot_cond_dim), device=x.device)
         h = []
 
         # pdb.set_trace()

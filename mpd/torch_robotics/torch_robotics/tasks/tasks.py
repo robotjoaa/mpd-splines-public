@@ -140,6 +140,11 @@ class PlanningTask(Task):
             self.df_collision_ws_boundaries,
         ]
 
+    # def update_df_collision_trajectory(self, merged_traj,) : 
+    #     if self.df_collision_objects :
+    #         self.df_collision_objects.parametric_trajectory =
+    #     if self.df_collision_extra_objects : 
+
     def set_q_pos_start_goal(self, q_pos_start, q_pos_goal, **kwargs):
         self.q_pos_start = q_pos_start
         self.parametric_trajectory.q_pos_start = q_pos_start
@@ -350,6 +355,7 @@ class PlanningTask(Task):
         # While the optimized trajectory via points are not at a 0 margin from the object, the interpolated via points
         # might be. A 0 margin guarantees that we do not discard those trajectories, while ensuring they are not in
         # collision (margin < 0).
+        # import pdb; pdb.set_trace()
         trajs_waypoints_collisions = self.compute_collision(
             trajs_interpolated, margin=self.margin_for_dense_collision_checking, **kwargs
         )

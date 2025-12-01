@@ -165,6 +165,7 @@ class DynPlanningTask(PlanningTask):
         #     #     use_field_collision_ws_boundaries
         #     # )
         #     raise NotImplementedError
+    
 
     def get_trajs_unvalid_and_valid(
         self, q_trajs, return_indices=False, num_interpolation=0, filter_joint_limits_vel_acc=False, **kwargs
@@ -232,6 +233,8 @@ class DynPlanningTask(PlanningTask):
         Returns:
             torch.Tensor: Timesteps, shape (horizon,)
         """
+        #import pdb
+        #pdb.set_trace()
         if hasattr(self.parametric_trajectory, 'get_timesteps'):
             timesteps = self.parametric_trajectory.get_timesteps()
             if horizon_size is not None and len(timesteps) != horizon_size:
