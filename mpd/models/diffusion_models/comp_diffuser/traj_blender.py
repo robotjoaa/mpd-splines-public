@@ -7,6 +7,8 @@ from mpd.models.diffusion_models.helpers import (
 )
 from .utils import extract_ovlp_from_full
 from torch_robotics.torch_utils.torch_utils import to_numpy, to_torch
+from pb_ompl.pb_ompl import fit_bspline_to_path
+from functools import partial
 
 class Traj_Blender:
     def __init__(self, horizon,
@@ -14,6 +16,7 @@ class Traj_Blender:
                         is_spline,
                         blend_type: str,
                         exp_beta=3,
+                        trajs_info=None,
                         ):
         
         self.exp_beta = exp_beta
@@ -24,7 +27,47 @@ class Traj_Blender:
         self.gap_len = self.hzn - 2 * self.len_ovlp
 
         self.is_spline = is_spline
+        self.trajs_info = trajs_info
+
         assert self.gap_len > 0
+
+    def get_local_q_trajs(self, cps_list, device):
+        assert self.trajs_info 
+
+        local_d = self.trajs_info['local']
+        n_comp = len(cps_list)
+        result = {}
+        pos_all = []
+        vel_all = []
+        acc_all = []
+        for i, cps in enumerate(cps_list) :  
+            cps = to_torch(cps, device=device)
+            q_pos_start = None
+            q_pos_end = None
+            #import pdb; pdb.set_trace()
+            if i== 0 : 
+                tmp_traj = local_d['start']
+                q_pos_start = cps[...,0,:].clone()#[...,None,:]
+            elif i == n_comp -1 :
+                tmp_traj = local_d['end']
+                q_pos_end = cps[...,-1,:].clone()#[...,None,:]
+            else :
+                tmp_traj = local_d['mid']
+                q_pos_start = cps[...,0,:].clone()#[...,None,:]
+                q_pos_end = cps[...,-1,:].clone()#[...,None,:]
+            # start, goal of tmp_traj must set 
+            #import pdb; pdb.set_trace()
+            tmp_q_trajs_d = tmp_traj.get_q_trajectory(cps, q_pos_start, q_pos_end, 
+                                                    get_type=("pos","vel","acc"), get_time_representation=True)
+            pos_all.append(tmp_q_trajs_d["pos"].unsqueeze(0))
+            vel_all.append(tmp_q_trajs_d["vel"].unsqueeze(0))
+            acc_all.append(tmp_q_trajs_d["acc"].unsqueeze(0))
+            
+        result["pos"] = torch.cat(pos_all)
+        result["vel"] = torch.cat(vel_all)
+        result["acc"] = torch.cat(acc_all)
+        return result
+
 
     def blend_traj_lists(self, trajs_list):
         """
@@ -89,7 +132,7 @@ class Traj_Blender:
 
             else : 
                 # blend bspline control points
-                trajs_blend = blend_spline(end_tjs_i, st_tjs_i_plus_1)
+                trajs_blend = blend_spline_np(end_tjs_i, st_tjs_i_plus_1)
 
             trajs_out[:, tmp_idx_1:tmp_idx_2, :] = trajs_blend
             cnt_v[:, tmp_idx_1:tmp_idx_2, :] += 1
@@ -181,7 +224,30 @@ def blend_2_np_trajs_23d(traj_1: np.ndarray, traj_2: np.ndarray, blend_type='exp
 
     return traj_blend
 
-def blend_spline(l_cps, r_cps, merged_spl, overlap) : 
-    raise NotImplementedError
+def blend_spline_np( 
+    left_traj : np.ndarray,
+    right_traj : np.ndarray,
+    #merged_spl,
+    #overlap = 10,
+) : 
+    # blend trajectory 
+    l_ovlp = left_traj.copy()
+    r_ovlp = right_traj.copy()
+    ovlp_traj = blend_2_np_trajs_23d(l_ovlp, r_ovlp, blend_type="linear")
+    return ovlp_traj 
+    # # print(blend_traj.shape)
+
+    # # fit bspline
+    # bspline_params = fit_bspline_to_path(
+    #     blend_traj,
+    #     bspline_degree=merged_spl.bspline.d,
+    #     bspline_num_control_points=merged_spl.bspline.n_pts,
+    #     bspline_zero_acc_at_start_and_goal=False,
+    #     bspline_zero_vel_at_start_and_goal=False,
+    #     debug=False,
+    # )
+
+    # _, cc, _ = bspline_params
+    # return cc.T
 
 

@@ -328,6 +328,17 @@ def render_results(
                 anim_time=args_inference.trajectory_duration,
                 filter_joint_limits_vel_acc=True,
             ) 
+            # planning_task.animate_robot_trajectories(
+            #     q_pos_trajs=results_single_plan.trajs_list_topn,
+            #     q_pos_start=q_pos_start,
+            #     q_pos_goal=q_pos_goal,
+            #     plot_x_trajs=True,
+            #     video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-{idx:03d}.mp4"),
+            #     #n_frames=max((2, results_single_plan.q_trajs_pos_iters[-1].shape[1] // 10)),
+            #     n_frames=args_inference.num_T_pts, #full frames
+            #     anim_time=args_inference.trajectory_duration,
+            #     filter_joint_limits_vel_acc=True,
+            # ) 
         else : 
             planning_task.animate_robot_trajectories(
                 q_pos_trajs=results_single_plan.q_trajs_pos_iters[-1],
@@ -339,7 +350,22 @@ def render_results(
                 anim_time=args_inference.trajectory_duration,
                 filter_joint_limits_vel_acc=True,
             )
-
+            
+            # q_pos_trajs_per_comp = torch.stack([results_single_plan.trajs_list[0][:10],results_single_plan.trajs_list[1][:10]])
+            # print(q_pos_trajs_per_comp.shape)
+            #tmp = results_single_plan.trajs_list_topn['pos']
+            tmp = results_single_plan.trajs_list
+            #import pdb; pdb.set_trace()
+            planning_task.animate_robot_trajectories(
+                q_pos_trajs=tmp,
+                q_pos_start=q_pos_start,
+                q_pos_goal=q_pos_goal,
+                plot_x_trajs=True,
+                video_filepath=os.path.join(results_dir, f"{base_file_name}-comp-robot-env-{idx:03d}.mp4"),
+                n_frames=tmp.shape[-2],
+                anim_time=args_inference.trajectory_duration,
+                filter_joint_limits_vel_acc=True,
+            )
     if debug:
         plt.show()
 
@@ -420,16 +446,24 @@ class GenerativeOptimizationPlanner:
             else:
                 raise ValueError
 
+            comp_args = args_inference["comp"]
+            print("comp" in args_inference)
+            is_spline = args_inference.model_selection == "bspline"
             diffusion_sampling_args.update(
                 method=args_inference.diffusion_sampling_method,
                 t_start_guide=t_start_guide,
                 n_diffusion_steps_without_noise=args_inference.n_diffusion_steps_without_noise,
                 compute_costs_with_xrecon=args_inference.compute_costs_with_xrecon,
-                n_comp = args_inference.n_comp,
-                len_ovlp_cd = args_inference.len_ovlp_cd,
-                #len_ovlp_cd = args_inference.len_ovlp_cd,
+                n_comp = comp_args.n_comp,
+                len_ovlp_cd = comp_args.len_ovlp_cd,
+                is_spline = is_spline,
+                guide_mode = comp_args.guide_mode,
+                do_cond = comp_args.do_cond,
+                blend_type = comp_args.blend_type,
+                blend_beta = comp_args.blend_beta
             )
-            
+            print(f"{comp_args.n_comp=}, {comp_args.len_ovlp_cd=}, {is_spline=} ")
+
             self.sample_fn_kwargs = diffusion_sampling_args
         elif isinstance(self.model, CVAEModel):
             pass
@@ -446,8 +480,6 @@ class GenerativeOptimizationPlanner:
                         planning_task,
                         dataset,
                         args_inference,
-                        n_comp=args_inference.n_comp,
-                        len_ovlp_cd=args_inference.len_ovlp_cd,
                         tensor_args=tensor_args,
                         debug=debug,
                         **kwargs,
@@ -647,7 +679,15 @@ class GenerativeOptimizationPlanner:
                         debug=debug,
                     )
                     control_points_normalized_iters = control_points_normalized[None, ...]
-                
+
+                    # normalize each trajectory
+                    if 'trajs_list_topn' in results_ns : 
+                        tmp_trajs = results_ns.trajs_list_topn['pos']
+                        
+                        trajs_list_norm = self.dataset.unnormalize_control_points(tmp_trajs) 
+                        results_ns.update(
+                            trajs_list = trajs_list_norm
+                        ) 
                 else : 
                     raise NotImplementedError
             else :
@@ -849,3 +889,23 @@ class GenerativeOptimizationPlanner:
         q_trajs_vel_iters = q_traj_d["vel"]
         q_trajs_acc_iters = q_traj_d["acc"]
         return q_trajs_pos_iters, q_trajs_vel_iters, q_trajs_acc_iters
+
+    def get_comp_animation_info(self) : 
+         ## set these to global trajectory
+        if not (self.args_inference.planner_alg == "mpd_comp" and isinstance(self.model, CompDiffusionModel)) : 
+            return None
+        #import pdb; pdb.set_trace()
+        len_ovlp_cd = self.args_inference["comp"].len_ovlp_cd
+        traj_duration_local = self.args_inference.trajectory_duration
+        num_T_pts_local = self.args_inference.num_T_pts
+        n_comp = self.args_inference["comp"].n_comp
+        n_cp_local = getattr(self.dataset, "n_learnable_control_points", self.dataset.control_points_dim[0])
+
+        ovlp_frac = len_ovlp_cd / float(n_cp_local)
+        overlap_time = traj_duration_local * ovlp_frac
+        overlap_T_pts = max(1, int(round(num_T_pts_local * ovlp_frac)))
+
+        num_T_pts_global = max(1, int(n_comp * num_T_pts_local - (n_comp - 1) * overlap_T_pts))
+        traj_duration_global = n_comp * traj_duration_local - (n_comp - 1) * overlap_time
+
+        return num_T_pts_global, traj_duration_global

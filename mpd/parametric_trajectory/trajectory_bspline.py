@@ -1,7 +1,7 @@
 import isaacgym
 
 from functools import partial
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 import einops
@@ -15,6 +15,13 @@ from mpd.parametric_trajectory.phase_time import PhaseTimeLinear, PhaseTimeSigmo
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
 from torch_robotics.visualizers.plot_utils import create_fig_and_axes
 
+from enum import Enum
+
+class CompEnum(Enum):
+    DEFAULT = 0 # no comp
+    START = 1
+    MID = 2 
+    END = 3 
 
 class ParametricTrajectoryBspline(ParametricTrajectoryBase):
 
@@ -40,7 +47,7 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
             phase_time_class=phase_time_class,
             phase_time_args=phase_time_args,
         )
-
+        self.n_control_points = n_control_points
         self.bspline = BSpline(num_pts=n_control_points, degree=degree, num_T_pts=num_T_pts, **tensor_args)
         self.bspline_basis_map = {"pos": self.bspline.N, "vel": self.bspline.dN, "acc": self.bspline.ddN}
         self.zero_vel_at_start_and_goal = zero_vel_at_start_and_goal
@@ -48,9 +55,19 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
         self.remove_outer_control_points = remove_outer_control_points
         self.keep_last_control_point = keep_last_control_point
 
-        ### used for comp diffuser
-        # None if not comp, True : start segment, False : end segment 
-        self.remove_from_start_control_points = kwargs.get('remove_from_start_control_points', None)
+        # Comp stage selection (legacy flag still supported)
+        #legacy_remove = kwargs.get("remove_from_start_control_points", None)
+        comp_stage: Optional[CompEnum] = kwargs.get("comp_stage", None)
+        # if comp_stage is None:
+        #     if legacy_remove is None:
+        #         comp_stage = CompEnum.DEFAULT
+        #     elif legacy_remove is True:
+        #         comp_stage = CompEnum.START
+        #     elif legacy_remove is False:
+        #         comp_stage = CompEnum.END
+        self.comp_stage = comp_stage or CompEnum.DEFAULT
+        # keep legacy attribute for compatibility
+        # self.remove_from_start_control_points = legacy_remove
 
     def remove_control_points_fn(self, cps):
         # Remove the first and last control points in position, velocity and acceleration
@@ -58,7 +75,7 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
     
         last_control_point = cps[..., -1, :].clone()
         if self.remove_outer_control_points:
-            if self.remove_from_start_control_points is None : 
+            if self.comp_stage == CompEnum.DEFAULT :
                 cps = cps[..., 1:-1, :]
                 if self.zero_vel_at_start_and_goal:
                     cps = cps[..., 1:-1, :]
@@ -67,14 +84,14 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
                 if self.keep_last_control_point:
                     cps = torch.cat((cps, last_control_point[..., None, :]), dim=-2)
             
-            elif self.remove_from_start_control_points == True : 
+            elif self.comp_stage == CompEnum.START: 
                 cps = cps[..., 1:, :]
                 if self.zero_vel_at_start_and_goal:
                     cps = cps[..., 1:, :]
                 if self.zero_acc_at_start_and_goal:
                     cps = cps[..., 1:, :]
 
-            else : 
+            elif self.comp_stage == CompEnum.END: 
                 cps = cps[..., :-1, :]
                 if self.zero_vel_at_start_and_goal:
                     cps = cps[..., :-1, :]
@@ -82,56 +99,78 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
                     cps = cps[..., :-1, :]
                 if self.keep_last_control_point:
                     cps = torch.cat((cps, last_control_point[..., None, :]), dim=-2)
+            elif self.comp_stage == CompEnum.MID : 
+                pass 
+
+        else : 
+            # remove only the fixed zero-vel/zero-acc copies while keeping start/goal learnable
+            start_trim = 0
+            end_trim = 0
+            if self.comp_stage in (CompEnum.DEFAULT, CompEnum.START):
+                if self.zero_vel_at_start_and_goal:
+                    start_trim += 1
+                if self.zero_acc_at_start_and_goal:
+                    start_trim += 1
+            if self.comp_stage in (CompEnum.DEFAULT, CompEnum.END):
+                if self.zero_vel_at_start_and_goal:
+                    end_trim += 1
+                if self.zero_acc_at_start_and_goal:
+                    end_trim += 1
+
+            if start_trim or end_trim:
+                cps = cps[..., start_trim : cps.shape[-2] - end_trim, :]
+            # MID: no trimming
 
         return cps
 
     def augment_control_points_fn(self, control_points, q_pos_start=None, q_pos_goal=None):
         q_pos_start, q_pos_goal = self.get_q_pos_start_q_goal(q_pos_start, q_pos_goal)
 
-        if control_points.ndim - q_pos_start.ndim == 1:
-            q_pos_start = einops.rearrange(q_pos_start, "... d -> ... 1 d")
-            q_pos_goal = einops.rearrange(q_pos_goal, "... d -> ... 1 d")
-        else:
-            repeat_shape = control_points.shape[:-2]
-            if len(repeat_shape) == 1:
-                q_pos_start = einops.repeat(q_pos_start, "... -> n 1 ...", n=repeat_shape[0])
-                q_pos_goal = einops.repeat(q_pos_goal, "... -> n 1 ...", n=repeat_shape[0])
-            elif len(repeat_shape) == 2:
-                q_pos_start = einops.repeat(q_pos_start, "... -> n m 1 ...", n=repeat_shape[0], m=repeat_shape[1])
-                q_pos_goal = einops.repeat(q_pos_goal, "... -> n m 1 ...", n=repeat_shape[0], m=repeat_shape[1])
+        def _expand_point(pt):
+            """Match start/goal point shape to control points for concatenation."""
+            pt = torch.as_tensor(pt, device=control_points.device, dtype=control_points.dtype)
+            # Insert the control-point dimension right before the last axis.
+            pt = pt.view(*pt.shape[:-1], 1, pt.shape[-1])
+            # Add missing batch dims (if any) to match control_points.ndim.
+            while pt.ndim < control_points.ndim:
+                pt = pt.unsqueeze(0)
+            target_shape = control_points.shape[:-2] + (1, control_points.shape[-1])
+            return pt.expand(target_shape)
+
+        q_pos_start = _expand_point(q_pos_start)
+        q_pos_goal = _expand_point(q_pos_goal)
 
         last_inner_control_point = control_points[..., -1, :].clone()[..., None, :]
+
         if self.keep_last_control_point:
             control_points = control_points[..., :-1, :]
         control_points_augmented = control_points.clone()
         if self.remove_outer_control_points:
             # add control points in between the initial and goal states
-            if self.remove_from_start_control_points is None : 
+            if self.comp_stage == CompEnum.DEFAULT: 
                 if self.zero_acc_at_start_and_goal:
                     if self.keep_last_control_point:
                         control_points_augmented = torch.cat(
                             [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
-                        ) # +1 
+                        )
                     else:
                         control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
-                        # +2 
 
                 if self.zero_vel_at_start_and_goal:
                     if self.keep_last_control_point:
                         control_points_augmented = torch.cat(
                             [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
-                        ) # + 2 
+                        )
                     else:
                         control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
-                        # + 2
                 if self.keep_last_control_point:
                     control_points_augmented = torch.cat(
                         [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
-                    ) # +2
+                    )
                 else:
                     control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
                 
-            elif self.remove_from_start_control_points == True :
+            elif self.comp_stage == CompEnum.START:
                 if self.zero_acc_at_start_and_goal:
                     control_points_augmented = torch.cat([q_pos_start, control_points_augmented], dim=-2)
 
@@ -140,7 +179,7 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
 
                 control_points_augmented = torch.cat([q_pos_start, control_points_augmented], dim=-2)
             
-            else : 
+            elif self.comp_stage == CompEnum.END: 
                 if self.zero_acc_at_start_and_goal:
                     if self.keep_last_control_point:
                         control_points_augmented = torch.cat(
@@ -163,17 +202,71 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
                     )
                 else:
                     control_points_augmented = torch.cat([control_points_augmented, q_pos_goal], dim=-2)
+            elif self.comp_stage == CompEnum.MID : 
+                # revert keep last control point
+                if self.keep_last_control_point : 
+                    control_points_augmented = torch.cat(
+                        [control_points_augmented, last_inner_control_point], dim=-2
+                    )
+
+        else : 
+            # keep last does not matter, revert keep last
+            if self.keep_last_control_point:
+                control_points_augmented = torch.cat(
+                            [control_points_augmented, last_inner_control_point], dim=-2) 
+
+            if self.comp_stage == CompEnum.DEFAULT:
+                first_point = control_points_augmented[...,0,:].clone()[..., None, :]
+                last_point = control_points_augmented[...,-1,:].clone()[..., None, :]
+                if self.zero_acc_at_start_and_goal:
+                    control_points_augmented = torch.cat([first_point, control_points_augmented, last_point], dim=-2)
+                if self.zero_vel_at_start_and_goal:
+                    control_points_augmented = torch.cat([first_point, control_points_augmented, last_point], dim=-2)
+
+            elif self.comp_stage == CompEnum.START:
+                first_point = control_points_augmented[...,0,:].clone()[..., None, :]
+                if self.zero_acc_at_start_and_goal:
+                    control_points_augmented = torch.cat([first_point, control_points_augmented], dim=-2)
+                if self.zero_vel_at_start_and_goal:
+                    control_points_augmented = torch.cat([first_point, control_points_augmented], dim=-2)
+
+            elif self.comp_stage == CompEnum.END: 
+                last_point = control_points_augmented[...,-1,:].clone()[..., None, :]
+
+                if self.zero_acc_at_start_and_goal:
+                    control_points_augmented = torch.cat([control_points_augmented, last_point], dim=-2)
+
+                if self.zero_vel_at_start_and_goal:
+                    control_points_augmented = torch.cat([control_points_augmented, last_point], dim=-2)
+            
+            elif self.comp_stage == CompEnum.MID:
+                pass
+
+
 
         return control_points_augmented
 
     def preprocess_control_points(self, q_control_points):
         # ensure b-spline boundary conditions
         if self.zero_vel_at_start_and_goal:
-            q_control_points[..., 1, :] = q_control_points[..., 0, :]
-            q_control_points[..., -2, :] = q_control_points[..., -1, :]
+            assert self.comp_stage != CompEnum.MID 
+            if self.comp_stage == CompEnum.DEFAULT:
+                q_control_points[..., 1, :] = q_control_points[..., 0, :]
+                q_control_points[..., -2, :] = q_control_points[..., -1, :]
+            elif self.comp_stage == CompEnum.START:
+                q_control_points[..., 1, :] = q_control_points[..., 0, :]
+            elif self.comp_stage == CompEnum.END:
+                q_control_points[..., -2, :] = q_control_points[..., -1, :]
+            
         if self.zero_acc_at_start_and_goal:
-            q_control_points[..., 2, :] = q_control_points[..., 0, :]
-            q_control_points[..., -3, :] = q_control_points[..., -1, :]
+            assert self.comp_stage != CompEnum.MID 
+            if self.comp_stage == CompEnum.DEFAULT:
+                q_control_points[..., 2, :] = q_control_points[..., 0, :]
+                q_control_points[..., -3, :] = q_control_points[..., -1, :]
+            elif self.comp_stage == CompEnum.START:
+                q_control_points[..., 2, :] = q_control_points[..., 0, :]
+            elif self.comp_stage == CompEnum.END:
+                q_control_points[..., -3, :] = q_control_points[..., -1, :]
         return q_control_points
 
     def get_q_trajectory_in_phase(self, q_control_points: torch.Tensor, get_type: Tuple = ("pos", "vel", "acc")):

@@ -521,6 +521,7 @@ class CompDiffusionModel(nn.Module, ABC):
                     tj_cond_2['force_zero_end_ovlp'] = True
                 assert (t_2d_2[0] == t_2d_2[0,0]).all(), 'sanity check'
                 t_1d_2 = t_2d_2[:, 0]
+            
                 out = self.model(x_2, t_1d_2, tj_cond_2, force_dropout=True, half_fd=True)
                 out_cd = out[:len(x), :, :]
                 out_uncd = out[len(x):, :, :]
@@ -572,7 +573,9 @@ class CompDiffusionModel(nn.Module, ABC):
                         idx = tj_cond['idx']
                         # if guide is not none, it must have timestep
                         # Pass context_d as keyword to avoid toggling return_cost arg in CostGuideManagerParametricTrajectory
+                        #pdb.set_trace()
                         grad_guide = guide(x, context_d=context_d, idx=idx) # tj_cond must include time range for guidance, g_cond
+                        
 
                     grad_guide_clipped = clip_grad_fn(grad_guide)
                     grad_guide_clipped_weighted = guide_lr * grad_guide_clipped
@@ -653,22 +656,41 @@ class CompDiffusionModel(nn.Module, ABC):
             #                 'b d -> (repeat b) d', repeat=n_samples,
             #             )
             # g_cond['st_gl'] = stgl_cond
-            if not hasattr(self, "tj_blder") : 
-                self.is_spline = False # manual  
-                self.blend_type = "exponential"
-                self.blend_beta = 3
 
-                self.tj_blder = Traj_Blender(
-                    self.horizon,
-                    self.len_ovlp_cd,
-                    self.is_spline,
-                    self.blend_type,
-                    exp_beta = self.blend_beta
-                )
+            print_color(f"loaded trained model : {self.guide_mode=}, {self.len_ovlp_cd=}")
+
+            self.len_ovlp_cd = diffusion_kwargs.get('len_ovlp_cd', self.len_ovlp_cd)
+
+            #if not hasattr(self, "tj_blder") : 
+            # should be in diffusion_kwargs
+            self.is_spline = diffusion_kwargs.get('is_spline', False) # manual  
+            self.blend_type = diffusion_kwargs.get('blend_type', "linear")
+            self.blend_beta = diffusion_kwargs.get('blend_beta', 3)
+            inference_mode = diffusion_kwargs.get("guide_mode", 'default')
+            self.guide_mode = inference_mode
+            do_cond = diffusion_kwargs.get("do_cond", False)
+            print_color(f"run_inference : {inference_mode=}, {do_cond=}, {self.len_ovlp_cd=}")
+            print(f"hard_conds : {g_cond['st_gl']}")
+
+            trajs_info = None 
+            if self.is_spline :
+                tmp_guide = diffusion_kwargs.get('guide', None) 
+                if tmp_guide is not None and isinstance(tmp_guide, CostGuideManagerCompTrajectory) : 
+                    trajs_info = tmp_guide.get_all_parametric_trajectory()
+
+            self.tj_blder = Traj_Blender(
+                self.horizon,
+                self.len_ovlp_cd,
+                self.is_spline,
+                self.blend_type,
+                exp_beta = self.blend_beta,
+                trajs_info = trajs_info,
+            )
 
             sample = self.gen_cond_stgl(g_cond, 
                                         context_d, 
                                         batch_size=n_samples,
+                                        pick_type="all",
                                         **diffusion_kwargs,
                                         )
             return sample
@@ -722,10 +744,17 @@ class CompDiffusionModel(nn.Module, ABC):
     def p_losses(self, x_start, x_noisy, noise, t_2d, tj_cond):
         
         batch_loss_w = torch.ones_like(x_start[:,:,:1])
-        batch_loss_w[tj_cond['is_st_inpat'],0] = 0.
-        batch_loss_w[tj_cond['is_end_inpat'],self.horizon-1] = 0.
-        assert x_start.shape[1] == self.horizon 
+        # There can be multiple inpat
+        if tj_cond['idx_st_inpat'] is not None : 
+            batch_loss_w[tj_cond['is_st_inpat'],tj_cond['idx_st_inpat']] = 0.
+        else :
+            # should be all None. 
+            assert torch.all(tj_cond['is_st_inpat']) == False
+        if tj_cond['idx_end_inpat'] is not None : 
+            batch_loss_w[tj_cond['is_end_inpat'],tj_cond['idx_end_inpat']] = 0.
+            assert torch.all(tj_cond['is_end_inpat']) == False
 
+        assert x_start.shape[1] == self.horizon 
         # diffusion model
         #x_recon = self.model(x_noisy, t, context_emb)
         #x_recon = apply_hard_conditioning(x_recon, hard_conds)
@@ -967,14 +996,17 @@ class CompDiffusionModel(nn.Module, ABC):
         
         ## start conditioning
         #if 0 in hard_conds.keys():
-        if st_traj is None : 
+        st_cond = self.split_hard_conds(hard_conds, is_start=True)
+        num_st_cond = len(st_cond)
+        if st_traj is None and num_st_cond > 0 : 
             # pdb.set_trace()
             # assert st_traj is None
-            st_cond = self.split_hard_conds(hard_conds, is_start=True)
             x_et = apply_hard_conditioning(x_et, st_cond)
             is_st_inpat = torch.ones(size=(batch_size,), dtype=torch.bool, device=device)
+            idx_st_inpat = st_cond.keys()
         else:
             is_st_inpat = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
+            idx_st_inpat = None
 
 
 
@@ -991,14 +1023,18 @@ class CompDiffusionModel(nn.Module, ABC):
 
         ## do inpainting conditioning
         # if hzn_minus1 in hard_conds.keys():
-        if end_traj is None : 
+        end_cond = self.split_hard_conds(hard_conds, is_start=False)
+        num_end_cond = len(end_cond)
+        if end_traj is None and num_end_cond > 0 : 
             # pdb.set_trace()
             # assert end_traj is None
-            end_cond = self.split_hard_conds(hard_conds, is_start=False)
             x_et = apply_hard_conditioning(x_et, end_cond)
+            ## create 2 dimension is_end_inpat compatible for multiple hard conditions
             is_end_inpat = torch.ones(size=(batch_size,), dtype=torch.bool, device=device)
+            idx_end_inpat = end_cond.keys()
         else:
             is_end_inpat = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
+            idx_end_inpat = None
 
         # ## each end should have some conditions
         # assert ( (st_traj is not None) or 0 in hard_conds ) and \
@@ -1056,6 +1092,8 @@ class CompDiffusionModel(nn.Module, ABC):
             ##
             'is_st_inpat': is_st_inpat,
             'is_end_inpat': is_end_inpat,
+            'idx_start_inpat': idx_st_inpat, # used for batch_loss_w
+            'idx_end_inpat': idx_end_inpat,
             'context_d': context_d
         }
         # pdb.set_trace()
@@ -1069,8 +1107,8 @@ class CompDiffusionModel(nn.Module, ABC):
                       n_comp=2,
                       horizon=None,
                       return_chain=True,
-                      pick_type="all",
-                      top_n=1, 
+                      pick_type="first",
+                      top_n=1,  
                       results_ns = None,
                       **diffusion_kwargs):
         """
@@ -1078,7 +1116,10 @@ class CompDiffusionModel(nn.Module, ABC):
         st_gl: *not normed*, np2d [2, ndim], e.g., [ [st], [end] ], [[2,1], [3,4]],
         b_s: batch_size, 10-20+
         """
+        self.len_ovlp_cd = diffusion_kwargs.get('len_ovlp_cd', self.len_ovlp_cd)
         print(f"gen_cond_stgl {batch_size=}, {n_comp=}, {horizon=}, {self.len_ovlp_cd=}, {pick_type=}, {top_n=}")
+        #import pdb; pdb.set_trace()
+        
         hzn = horizon if horizon else self.horizon 
         o_dim = self.state_dim
         c_shape = [batch_size, hzn, o_dim] ## e.g.,(20,160,2)
@@ -1092,10 +1133,15 @@ class CompDiffusionModel(nn.Module, ABC):
         
         ## make sure return is not a view
         hard_conds = {}
+        #pdb.set_trace()
         if st_gl :
             for k,v in st_gl.items() : 
-                assert v.ndim == 2
-                hard_conds[k] = einops.repeat(v, 'n_p d -> (n_p rr) d', rr=batch_size).clone()
+                if v.ndim == 1 : 
+                    tmp = v[None, ]
+                else : 
+                    tmp = v 
+                assert tmp.ndim == 2
+                hard_conds[k] = einops.repeat(tmp, 'n_p d -> (n_p rr) d', rr=batch_size).clone()
 
             # could have multiple hard_conds 
             # ex) 0, 1, 2 / hzn-2, hzn-1, hzn 
@@ -1170,10 +1216,13 @@ class CompDiffusionModel(nn.Module, ABC):
         device = trajs_list[0].device
 
         trajs_list_np = [to_numpy(t) for t in trajs_list]
-        s_idxs, dist_per_sam = utils.compute_ovlp_dist(trajs_list_np, 
-                                                       self.len_ovlp_cd)
         
-        top_n = batch_size
+        s_idxs, dist_per_sam = utils.compute_ovlp_dist(trajs_list_np, 
+                                                    self.len_ovlp_cd, self.is_spline)
+        print(f"{dist_per_sam=}")
+        
+        # top_n = batch_size
+        top_n = min(10 , batch_size)
         ## list, pick out the topn, from un-normed traj
         trajs_list_topn = utils.pick_top_n_trajs(trajs_list_np, s_idxs, top_n)
         ## np, un-normed, shape (B, tot_hzn, dim)
@@ -1184,19 +1233,22 @@ class CompDiffusionModel(nn.Module, ABC):
 
         ## pick one traj to execute
         if pick_type == 'first':
-            pick_traj = trajs_list_topn_bl[0]
+            pick_traj = trajs_list_topn_bl[0].unsqueeze(0)
         elif pick_type == 'rand':
             p_idx = np.random.randint(low=0, high=top_n)
-            pick_traj = trajs_list_topn_bl[p_idx]
+            pick_traj = trajs_list_topn_bl[p_idx].unsqueeze(0)
         elif pick_type == 'all':
             pick_traj = trajs_list_topn_bl
         else : 
             raise NotImplementedError
         
         if results_ns : 
+            trajs_list_topn_q_trajs = self.tj_blder.get_local_q_trajs(trajs_list_topn, device)
+            
             results_ns.update(
-                trajs_list_topn_bl = trajs_list_topn_bl,
-                trajs_list = trajs_list 
+                trajs_list_topn =  trajs_list_topn_q_trajs,
+                # trajs_list_topn_bl = trajs_list_topn_bl,
+                # trajs_list = trajs_list 
             )
             if return_chain :
                 results_ns.update(
@@ -1244,7 +1296,8 @@ class CompDiffusionModel(nn.Module, ABC):
         else:
             raise NotImplementedError
         ## -----------------
-
+        
+        do_cond = sample_kwargs.get('do_cond', False)
 
         from tqdm import tqdm
         for k_step, (_time, _time_next) in enumerate(time_pairs):
@@ -1282,9 +1335,10 @@ class CompDiffusionModel(nn.Module, ABC):
                         # i_tj, n_comp
                         )
                     
-                    tj_cond_p_i['do_cond'] = False # True 
+                    tj_cond_p_i['do_cond'] = do_cond # True 
                     tj_cond_p_i['idx'] = i_tj
                     # if self.use_ddim:
+                    
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
                                 sampling_timesteps=sampling_timesteps,
                                 current_step = k_step, 
@@ -1292,6 +1346,7 @@ class CompDiffusionModel(nn.Module, ABC):
                                 ddim_eta=ddim_eta,
                                 guide = guide,
                                 ddim_final_add_noise= (_time_next >= 1),
+                                results_ns=results_ns,
                                 **sample_kwargs,
                             ) 
 
@@ -1319,7 +1374,7 @@ class CompDiffusionModel(nn.Module, ABC):
                         # i_tj, n_comp
                     )
                     
-                    tj_cond_p_i['do_cond'] = False # True
+                    tj_cond_p_i['do_cond'] = do_cond # True
                     tj_cond_p_i['idx'] = i_tj
                     # if self.use_ddim:
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
@@ -1329,6 +1384,7 @@ class CompDiffusionModel(nn.Module, ABC):
                                 ddim_eta=ddim_eta,
                                 guide = guide,
                                 ddim_final_add_noise= (_time_next >= 1),
+                                results_ns=results_ns,
                                 **sample_kwargs,
                             ) 
                     
@@ -1353,7 +1409,7 @@ class CompDiffusionModel(nn.Module, ABC):
                         # i_tj, n_comp
                         )
                     
-                    tj_cond_p_i['do_cond'] = False # True
+                    tj_cond_p_i['do_cond'] = do_cond # True
                     tj_cond_p_i['idx'] = i_tj
 
                     # if self.use_ddim:
@@ -1364,6 +1420,7 @@ class CompDiffusionModel(nn.Module, ABC):
                                 ddim_eta=ddim_eta,
                                 guide = guide,
                                 ddim_final_add_noise= (_time_next >= 1),
+                                results_ns=results_ns,
                                 **sample_kwargs,
                             ) 
                     x_p_list[i_tj] = x_p_i
@@ -1377,6 +1434,7 @@ class CompDiffusionModel(nn.Module, ABC):
             guide.reset_task_trajectory()
 
         ## Finished
+        #pdb.set_trace()
         st_cond = self.split_hard_conds(hard_conds, is_start=True)
         end_cond = self.split_hard_conds(hard_conds, is_start=False)
         x_p_list[0] = apply_hard_conditioning(x_p_list[0],st_cond)

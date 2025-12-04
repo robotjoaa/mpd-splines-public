@@ -21,11 +21,12 @@ from mpd.inference.cost_guides import (
     NoCostException,
     project_hierarchical_gradients_fast,
 )
-from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBspline
+from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBspline, CompEnum
 from mpd.datasets.trajectories_dataset_bspline import adjust_bspline_number_control_points
 from mpd.datasets.trajectories_dataset_waypoints import adjust_waypoints
 
 import pdb
+
 class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
 
     def __init__(
@@ -33,14 +34,12 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         planning_task,
         dataset,
         args_inference,
-        n_comp,
-        len_ovlp_cd,
         tensor_args=DEFAULT_TENSOR_ARGS,
         debug=False,
         **kwargs,
     ):
-        self.n_comp = n_comp
-        self.len_ovlp_cd = len_ovlp_cd
+        self.n_comp = args_inference["comp"]["n_comp"]
+        self.len_ovlp_cd = args_inference["comp"]["len_ovlp_cd"]
 
         # Keep a handle on the original (local) parametric trajectory before the
         # parent class copies it – costs should be computed on these local
@@ -83,6 +82,8 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         self.local_trajectory_d = self._adjust_local_trajectory()
         
         self.planning_task.parametric_trajectory = self._parametric_trajectory_global
+        if self.planning_task.is_dynamic : 
+            self.planning_task.update_df_parametric_trajectory(self._parametric_trajectory_global)
         print(f"{self.planning_task.parametric_trajectory.n_control_points=}")
         # Ensure the guide keeps using the local segment trajectory for cost computation.
         self.parametric_trajectory = self._parametric_trajectory_local # placeholder
@@ -92,8 +93,19 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         for cost_key in self.costs:
             cost_fn = self.costs[cost_key].cost
             cost_fn.update_parametric_trajectory(self.planning_task.parametric_trajectory)
-
+            print("reset:", len(self.planning_task.parametric_trajectory.get_timesteps()))
         # self.planning_task.parametric_trajectory = self._parametric_trajectory_global
+
+        # reset distance field time varying parametric trajectory 
+
+
+    def get_all_parametric_trajectory(self) : 
+        result = dict(
+            local = self.local_trajectory_d, 
+            merged = self.planning_task.parametric_trajectory,
+            overlap_T_pts = self.overlap_T_pts
+        )
+        return result
 
     def get_parametric_trajectory(self, idx):  # key : "start", "end", ("mid")
         assert idx < self.n_comp and idx >= 0
@@ -134,11 +146,11 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         template = self._parametric_trajectory_local
         if isinstance(template, ParametricTrajectoryWaypoints):
             # reverse of augment control point
-            _, num_add = adjust_waypoints(n_control_points, template.remove_outer_control_points, template.keep_last_control_points)
+            _, num_add = adjust_waypoints(n_control_points, template.remove_outer_control_points, template.keep_last_control_point)
             print(f"control points added : {num_add}")
             self.traj_kwargs = dict(
                 remove_outer_control_points=template.remove_outer_control_points,
-                keep_last_control_point=template.keep_last_control_points,
+                keep_last_control_point=template.keep_last_control_point,
                 use_interpolation_matrix=template.use_interpolation_matrix,
             )
             return ParametricTrajectoryWaypoints(
@@ -148,12 +160,12 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
             )
         if isinstance(template, ParametricTrajectoryBspline):
             # reverse of augment control point
-            _, num_add = adjust_bspline_number_control_points(n_control_points, template.remove_outer_control_points, template.keep_last_control_points, \
+            _, num_add = adjust_bspline_number_control_points(n_control_points, template.remove_outer_control_points, template.keep_last_control_point, \
                                                               template.zero_vel_at_start_and_goal, template.zero_acc_at_start_and_goal)
             
             print(f"control points added : {num_add}")
             self.traj_kwargs = dict(
-                degree=template.bspline.degree,
+                degree=template.bspline.d,
                 zero_vel_at_start_and_goal=template.zero_vel_at_start_and_goal,
                 zero_acc_at_start_and_goal=template.zero_acc_at_start_and_goal,
                 remove_outer_control_points=template.remove_outer_control_points,
@@ -171,7 +183,8 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
     def _set_merged_trajectory(self):
         # Local statistics
         n_cp_local = getattr(self.dataset, "n_learnable_control_points", self.dataset.control_points_dim[0])
-        
+        # n_cp_local = 24
+        print(f'{n_cp_local=}, { self.dataset.control_points_dim[0]=}')
         # n_cp_local = self.n_control_points_local # 18
         # Overlap portion expressed in the same units as control points and time steps.
         ovlp_frac = self.len_ovlp_cd / float(n_cp_local)
@@ -192,10 +205,100 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         print(f"set merged trajectory start : {merged_traj.q_pos_start}, goal : {merged_traj.q_pos_goal}")
         return merged_traj
     
+    def _compute_augmented_control_points(self,  template, orig_len, **kwargs,) : 
+        #orig_len = template.n_control_points
+        tmp_class = template.__class__
+        comp_stage = kwargs.get("comp_stage", CompEnum.DEFAULT)
+
+        def _augmented_len_bspline(n):
+            keep_last = kwargs.get("keep_last_control_point", False)
+            remove_outer = kwargs.get("remove_outer_control_points", False)
+            zero_vel = kwargs.get("zero_vel_at_start_and_goal", False)
+            zero_acc = kwargs.get("zero_acc_at_start_and_goal", False)
+
+            # match augment_control_points_fn: drop last inner cp when keeping last
+            base_len = n - (1 if keep_last else 0)
+
+            if remove_outer:
+                if comp_stage == CompEnum.DEFAULT:
+                    added = 2
+                    if zero_acc:
+                        added += 2
+                    if zero_vel:
+                        added += 2
+                elif comp_stage in (CompEnum.START, CompEnum.END):
+                    added = 1
+                    if zero_acc:
+                        added += 1
+                    if zero_vel:
+                        added += 1
+                elif comp_stage == CompEnum.MID:
+                    added = 1 if keep_last else 0
+                else:
+                    raise NotImplementedError(f"Unknown comp_stage {comp_stage}")
+            else:
+                # remove_control_points_fn trims zero-vel/acc copies; augment re-adds them per side
+                if comp_stage == CompEnum.DEFAULT:
+                    added = 2  # final append of start/goal
+                    if zero_acc:
+                        added += 2
+                    if zero_vel:
+                        added += 2
+                elif comp_stage in (CompEnum.START, CompEnum.END):
+                    added = 0
+                    if zero_acc:
+                        added += 1
+                    if zero_vel:
+                        added += 1
+                elif comp_stage == CompEnum.MID:
+                    added = 1 if keep_last else 0
+                else:
+                    raise NotImplementedError(f"Unknown comp_stage {comp_stage}")
+
+            return base_len + added
+
+        def _augmented_len_waypoints(n):
+            keep_last = kwargs.get("keep_last_control_point", False)
+            remove_outer = kwargs.get("remove_outer_control_points", False)
+
+            # match augment_control_points_fn: drop last inner cp when keeping last
+            base_len = n - (1 if keep_last else 0)
+
+            if remove_outer:
+                if comp_stage == CompEnum.DEFAULT:
+                    added = 2
+                elif comp_stage in (CompEnum.START, CompEnum.END):
+                    added = 1
+                elif comp_stage == CompEnum.MID:
+                    added = 1 if keep_last else 0
+                else:
+                    raise NotImplementedError(f"Unknown comp_stage {comp_stage}")
+            else:
+                # only re-append kept last in mid; no zero-vel/acc handling for waypoints
+                if comp_stage == CompEnum.MID:
+                    added = 1 if keep_last else 0
+                else:
+                    added = 0
+
+            return base_len + added
+
+        if tmp_class == ParametricTrajectoryBspline:
+            after_len = _augmented_len_bspline(orig_len)
+        elif tmp_class == ParametricTrajectoryWaypoints:
+            after_len = _augmented_len_waypoints(orig_len)
+        else:
+            raise NotImplementedError(f"Unsupported parametric trajectory type: {tmp_class}")
+
+        #num_add = after_len - orig_len
+        # pdb.set_trace()
+        print(f"Adjust local control point number {orig_len} -> {after_len}")
+        return after_len 
+
     def _adjust_local_trajectory(self):
         # Local statistics
         template = self._parametric_trajectory_local
-        
+        temp_start = template.q_pos_start
+        temp_goal = template.q_pos_goal
         name_l = ['start', 'mid', 'end'] if self.n_comp > 2 else ['start', 'end'] 
         l_traj_dict = {}
         # convert global adjustment to local adjustment
@@ -209,27 +312,33 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         # )
         #pdb.set_trace()
         for name in name_l : 
-            n_control_points = template.n_control_points # 18
+            # n_control_points = template.n_control_points # 18
+            n_control_points = getattr(self.dataset, "n_learnable_control_points", self.dataset.control_points_dim[0])
             tmp_kwargs = self.traj_kwargs.copy()
-            #tmp_same = self.common_kwargs.copy()
             if name == "start" : 
-                tmp_kwargs["remove_from_start_control_points"] = True
-                n_control_points = n_control_points - 1 # start from 17
+                tmp_kwargs["comp_stage"] = CompEnum.START
             elif name == "end" : 
-                tmp_kwargs["remove_from_start_control_points"] = False
-                n_control_points = n_control_points - 1 # start from 17 
+                tmp_kwargs["comp_stage"] = CompEnum.END
             elif name == "mid":
-                #tmp_kwargs["remove_from_start_control_points"] = None
-                tmp_kwargs["remove_outer_control_points"] = False
-                n_control_points = n_control_points - 2 # start from 16 (no remove)
+                tmp_kwargs["comp_stage"] = CompEnum.MID
+                ## force to have non zero vel, acc 
+                ## unless we want to stop between overlap
+                tmp_kwargs['zero_vel_at_start_and_goal'] = False
+                tmp_kwargs['zero_acc_at_start_and_goal'] = False
             else :
                 raise NotImplementedError 
 
+            n_control_points = self._compute_augmented_control_points(template, n_control_points, **tmp_kwargs)
+
             tmp_class = template.__class__
-            traj_tmp = tmp_class(n_control_points=n_control_points,
-                      **tmp_kwargs,
-                      **self.common_kwargs
-                      )
+            traj_tmp = tmp_class(
+                n_control_points=n_control_points,
+                **tmp_kwargs,
+                **self.common_kwargs,
+            )
+            # add global start, goal
+            traj_tmp.q_pos_start = temp_start
+            traj_tmp.q_pos_goal = temp_goal
             # if isinstance(template, ParametricTrajectoryWaypoints):
             #     traj_tmp = ParametricTrajectoryWaypoints(
             #         n_control_points=template.n_control_points,
@@ -293,9 +402,13 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         for cost_key in self.costs:
             cost_fn = self.costs[cost_key].cost
             cost_fn.update_parametric_trajectory(current_traj)
-        
+        # pdb.set_trace()
+        # q_traj_in_phase_d = current_traj.get_q_trajectory( # augment_control_points_fn
+        #     control_points, self.global_start, self.global_goal, get_type=("pos", "vel", "acc"), get_time_representation=False
+        # ) 
+
         q_traj_in_phase_d = current_traj.get_q_trajectory( # augment_control_points_fn
-            control_points, self.global_start, self.global_goal, get_type=("pos", "vel", "acc"), get_time_representation=False
+            control_points, None, None, get_type=("pos", "vel", "acc"), get_time_representation=False
         ) 
         q_traj_pos_in_phase = q_traj_in_phase_d["pos"]
         q_traj_vel_in_phase = q_traj_in_phase_d["vel"]
@@ -499,7 +612,7 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         # For TaskSpace costs, we compute dC/dq = dC/dx * dx/dq * dq/dcp
         # For JointSpace costs, we compute dC/dq = dC/dq * dq/dcp
         # pdb.set_trace()
-        print(f"before cost fn : {control_points.shape=},")
+        # print(f"before cost fn : {control_points.shape=},")
         cost_value_in_phase, grad_cost_wrt_cp_in_phase = cost_fn.compute_cost_grad_wrt_cp( # 10, 128, 17, 2
             control_points, # [10, 16, 2]
             q_traj_pos_in_phase,
@@ -511,7 +624,7 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
             jacs_spatial_th_ee,
             **kwargs,
         )
-        print(f"after cost fn :  {cost_value_in_phase.shape=} {grad_cost_wrt_cp_in_phase.shape=}")
+        # print(f"after cost fn :  {cost_value_in_phase.shape=} {grad_cost_wrt_cp_in_phase.shape=}")
         # Gradient of the control points wrt to the control points normalized
         # dcp/dcp_norm
         grad_cp_wrt_cp_normalized = self.grad_cps_wrt_cps_normalized(control_points_normalized) # [10, 16, 2]

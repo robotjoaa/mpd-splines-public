@@ -252,6 +252,12 @@ def experiment(
         else : 
             q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
 
+            q_pos_start = to_torch([-0.9, -0.9165], **tensor_args)
+            q_pos_goal = to_torch([0.9,  0.9],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
+            ee_pose_goal = to_torch([[ 1.0000,  0.0000,  0.0000, q_pos_goal[0]],
+                                [ 0.0000,  1.0000,  0.0000,  q_pos_goal[1]],
+                                [ 0.0000,  0.0000,  1.0000,  0.0000]],  **tensor_args)
+
         print("\n----------------START AND GOAL states----------------")
         print(f"q_pos_start: {q_pos_start}")
         print(f"q_pos_goal: {q_pos_goal}")
@@ -369,9 +375,17 @@ def experiment(
         render_time = None 
         if failed_dict is not None : 
             render_time = failed_time_dict[idx_sg] if idx_sg in failed_idx else None
+        
+        comp_info = generative_optimization_planner.get_comp_animation_info()
+        modified_args = args_inference if comp_info is None else args_inference.copy()
+        if comp_info is not None :
+            num_T_pts_global, traj_duration_global = comp_info
+            modified_args.num_T_pts = num_T_pts_global
+            modified_args.trajectory_duration = traj_duration_global
+            print(f"modified {traj_duration_global=} {num_T_pts_global=}")
 
         render_results(
-            args_inference,
+            modified_args,
             planning_task,
             q_pos_start,
             q_pos_goal,

@@ -17,7 +17,18 @@ def extract_ovlp_from_full(x: torch.Tensor, len_ovlp_cd):
 
     return st_traj, end_traj
 
-def compute_ovlp_dist(trajs_list_un, len_ovlp_cd):
+
+# def _bspline_dist(l_cps, r_cps) : 
+    
+
+def _mse_dist(traj_1, traj_2) : 
+    # tmp_dist = np.linalg.norm( end_traj_1 - st_traj_2 ).item()
+    mse_dist = (traj_1 - traj_2) ** 2
+    ## (B,)
+    mse_dist = np.mean(mse_dist, axis=(1,2))
+    return mse_dist
+
+def compute_ovlp_dist(trajs_list_un, len_ovlp_cd, is_spline, **kwargs):
     '''
     actually if we do not do thresholding, normed trajs also seems fine, since we only do ranking
     Args:
@@ -29,6 +40,14 @@ def compute_ovlp_dist(trajs_list_un, len_ovlp_cd):
     assert trajs_list[0].ndim == 3
 
     dist_all = []
+
+    dist_fn = _mse_dist
+    # if is_spline : 
+    #     dist_fn = partial(_bspline_dist,)
+
+    # else : 
+    #     dist_fn = _mse_dist
+
     for i_tj in range(num_tj-1):
         traj_1 = trajs_list[i_tj]
         traj_2 = trajs_list[i_tj+1]
@@ -39,16 +58,13 @@ def compute_ovlp_dist(trajs_list_un, len_ovlp_cd):
         
         print(f'{end_traj_1.shape=}')
 
-        # tmp_dist = np.linalg.norm( end_traj_1 - st_traj_2 ).item()
-        mse_dist = (end_traj_1 - st_traj_2) ** 2
-        ## (B,)
-        mse_dist = np.mean(mse_dist, axis=(1,2))
+        dist = dist_fn(end_traj_1, st_traj_2)
 
-        dist_all.append(mse_dist)
+        dist_all.append(dist)
 
     ## (B, n_comp-1)
     dist_all = np.stack(dist_all, axis=1)
-    print(f'{dist_all.shape=}')
+    # print(f'{dist_all.shape=}')
     # print(dist_all)
 
     ## (B,) the avg dist of one sample

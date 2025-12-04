@@ -4,7 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from torch_robotics.torch_utils.torch_utils import to_torch
-
+import pdb
 
 # helpers from comp_diffuser
 from colorama import Fore
@@ -41,31 +41,38 @@ def extract_2d(a, t, x_shape):
     # pdb.set_trace()
 
     return out
-    
-def batch_repeat_tensor_in_dict(x: torch.Tensor, t_2d: torch.Tensor, cond_dd: dict, n_rp: int):
-	'''
-	FIXED: Return a new dict rather than modified the original Dict!
-	'''
-	if x is not None:
-		## B H D
-		x = x.repeat( (n_rp, 1, 1) )
-	if t_2d is not None:
-		assert t_2d.ndim == 2
-		t_2d = t_2d.repeat( (n_rp, 1,) )
-	
-	new_dd = {}
-	for k in cond_dd.keys():
-		if torch.is_tensor(cond_dd[k]):
-			new_dd[k] = cond_dd[k].repeat(   [n_rp] + [1,] * len(cond_dd[k].shape[1:])  )
-		elif type(cond_dd[k]) == np.ndarray:
-			# dd[k]
-			new_dd[k] = einops.repeat(cond_dd[k], 'b ... -> (rr b) ...', rr=n_rp )
-		else:
-			new_dd[k] = cond_dd[k]
-			assert type(cond_dd[k]) in [bool, type(None)]
 
-			
-	return x, t_2d, new_dd
+def batch_repeat_tensor_in_dict(x: torch.Tensor, t_2d: torch.Tensor, cond_dd: dict, n_rp: int):
+    '''
+    FIXED: Return a new dict rather than modified the original Dict!
+    '''
+    if x is not None:
+        ## B H D
+        x = x.repeat((n_rp, 1, 1))
+    if t_2d is not None:
+        assert t_2d.ndim == 2
+        t_2d = t_2d.repeat((n_rp, 1,))
+
+    new_dd = {}
+    for k in cond_dd.keys():
+        if torch.is_tensor(cond_dd[k]):
+            new_dd[k] = cond_dd[k].repeat([n_rp] + [1,] * len(cond_dd[k].shape[1:]))
+        elif type(cond_dd[k]) == np.ndarray:
+            # dd[k]
+            new_dd[k] = einops.repeat(cond_dd[k], 'b ... -> (rr b) ...', rr=n_rp)
+        elif type(cond_dd[k]) == dict : ## repeat tensor in dict
+            double_dict = {}
+            for kk in cond_dd[k].keys() : 
+                tmp_val = cond_dd[k][kk]
+                if torch.is_tensor(tmp_val) : 
+                    double_dict[kk] = tmp_val.repeat([n_rp] + [1,] * len(tmp_val.shape[1:]))
+                elif type(tmp_val) == np.ndarray : 
+                    double_dict[kk] = tmp_val.repeat(tmp_val, 'b ... -> (rr b) ...', rr=n_rp)
+            new_dd[k] = double_dict
+        else : # idx, dict
+            new_dd[k] = cond_dd[k] 
+
+    return x, t_2d, new_dd
 
 # -----------------------------------------------------------------------------#
 # ---------------------------- variance schedules -----------------------------#

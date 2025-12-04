@@ -140,11 +140,6 @@ class PlanningTask(Task):
             self.df_collision_ws_boundaries,
         ]
 
-    # def update_df_collision_trajectory(self, merged_traj,) : 
-    #     if self.df_collision_objects :
-    #         self.df_collision_objects.parametric_trajectory =
-    #     if self.df_collision_extra_objects : 
-
     def set_q_pos_start_goal(self, q_pos_start, q_pos_goal, **kwargs):
         self.q_pos_start = q_pos_start
         self.parametric_trajectory.q_pos_start = q_pos_start
@@ -541,8 +536,17 @@ class PlanningTask(Task):
         if q_pos_trajs is None:
             return
 
-        assert q_pos_trajs.ndim == 3
-        B, H, D = q_pos_trajs.shape
+        # assert q_pos_trajs.ndim == 3
+        if q_pos_trajs.ndim == 4 : 
+            n_comp, B, H, D = q_pos_trajs.shape
+            q_pos_trajs = einops.rearrange(q_pos_trajs, 'n b ... -> (n b) ...')
+            print(q_pos_trajs.shape)
+        elif q_pos_trajs.ndim == 3 : 
+            B, H, D = q_pos_trajs.shape
+            n_comp =1
+
+        assert q_pos_trajs.ndim == 3 
+        # import pdb; pdb.set_trace()
 
         idxs = np.round(np.linspace(0, H - 1, n_frames)).astype(int)
         q_pos_trajs_selection = q_pos_trajs[:, idxs, :]
@@ -558,6 +562,7 @@ class PlanningTask(Task):
                 q_pos_trajs, return_indices=True, **kwargs
             )
             traj_colors = []
+
             for i in range(len(q_trajs_coll_idxs) + len(q_trajs_free_idxs)):
                 traj_colors.append(
                     self.colors["collision"] if i in q_trajs_coll_idxs else self.colors["free"]
@@ -576,15 +581,27 @@ class PlanningTask(Task):
                 # Render trajectories with precomputed colors (avoid recomputing collisions!)
                 if traj_colors is not None:
                     render_kwargs = kwargs.copy()
-                    render_kwargs["colors"] = traj_colors
+                    if n_comp == 1 :
+                        render_kwargs["colors"] = traj_colors
+                    else :
+                        assert n_comp >= 2  
+                        
+                        import matplotlib.colors as mcolors
+                        colors = list(mcolors.BASE_COLORS.keys())
+                        tmp_colors = []
+                        for n_c in range(n_comp) : 
+                            tmp_colors += [colors[n_c]]*B
+                        render_kwargs["colors"] = tmp_colors
+                        
                     self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs, **render_kwargs)
 
             # Get precomputed collisions for current frame
             qs = q_pos_trajs_selection[:, i, :]  # batch, q_dim
             if qs.ndim == 1:
                 qs = qs.unsqueeze(0)  # interface (batch, q_dim)
-
+            
             # Render each robot with precomputed collision status
+            
             for idx, q in enumerate(qs):
                 is_collision = collisions_all[idx, i] if collisions_all.ndim > 1 else collisions_all
                 self.robot.render(

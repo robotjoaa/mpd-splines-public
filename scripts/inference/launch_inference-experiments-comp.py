@@ -75,7 +75,8 @@ project_gradient_hierarchy_l = [
 ]
 
 
-trajectory_duration = 4
+trajectory_duration = 4 # sml trajectory duration
+
 n_trajectory_samples = 100 #100
 
 n_start_goal_states = 1 #100
@@ -181,8 +182,8 @@ exp_id = 0
 # DIFFUSION
 
 model_selection_l = [
-    #"bspline",
-    "waypoints",
+    "bspline",
+    #"waypoints",
 ]
 
 planner_alg_l = [
@@ -207,10 +208,30 @@ comp_dict_l= [
     # OrderedDict(
     #     n_comp = 3 
     # )
+    # OrderedDict(
+    #     n_comp = 2,
+    #     len_ovlp_cd = 4,
+    #     guide_mode = "default", 
+    #     do_cond = False,
+    # ),
+    # OrderedDict(
+    #     n_comp = 2,
+    #     len_ovlp_cd = 4,
+    #     guide_mode = "default", 
+    #     do_cond = True,
+    # ),
     OrderedDict(
         n_comp = 2,
         len_ovlp_cd = 4,
-    )
+        guide_mode = "cfg", 
+        do_cond = True,
+    ),
+    OrderedDict(
+        n_comp = 2,
+        len_ovlp_cd = 4,
+        guide_mode = "hybrid", 
+        do_cond = True,
+    ),
 ]
 
 
@@ -274,9 +295,13 @@ for (
 
     n_comp = comp_dict['n_comp']
     len_ovlp_cd = comp_dict['len_ovlp_cd']
-
-    cfg_base['n_comp'] =  n_comp
-    cfg_base['len_ovlp_cd'] = len_ovlp_cd
+    guide_mode =comp_dict['guide_mode']
+    do_cond = comp_dict['do_cond']
+    cfg_base["comp"]['n_comp'] =  n_comp
+    cfg_base["comp"]['len_ovlp_cd'] = len_ovlp_cd
+    cfg_base["comp"]['guide_mode'] = guide_mode
+    cfg_base["comp"]["do_cond"] = do_cond
+    
     # save the new config file
     cfg_file_stem = Path(cfg_file).stem
     cfg_file_path_tmp = os.path.join("./cfgs/tmp", f"{cfg_file_stem}-{exp_id:04d}.yaml")
@@ -297,7 +322,9 @@ for (
         project_gradient_hierarchy__=project_gradient_hierarchy,
         trajectory_duration__=trajectory_duration,
         n_comp__ = n_comp,
-        #len_ovlp_cd__ = len_ovlp_cd,
+        len_ovlp_cd__ = len_ovlp_cd,
+        guide_mode__ = guide_mode,
+        do_cond__ = do_cond,
         cfg_inference_path=cfg_file_path_tmp,
         n_start_goal_states=n_start_goal_states,
         device="cuda:0",
