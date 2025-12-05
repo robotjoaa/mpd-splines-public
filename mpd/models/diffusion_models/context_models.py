@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from mpd.models.layers.layers import MLP
+from mpd.models.layers.layers import MLP, SinusoidalPosEmb
 
 
 class ContextModelEEPoseGoal(nn.Module):
@@ -37,8 +37,8 @@ class ContextModelQs(nn.Module):
         return emb
 
 
-class ContextModelCombined(nn.Module):
 
+class ContextModelCombined(nn.Module) : 
     def __init__(
         self, context_model_qs=None, context_model_ee_pose_goal=None, out_dim=64, n_layers=1, act="relu", **kwargs
     ):
@@ -79,3 +79,62 @@ class ContextModelCombined(nn.Module):
 
         context_emb = self.net(emb)
         return context_emb
+
+
+### Used for global context embeddding ### 
+### Features : context qs, context_model_ee_pose_goal, progress, delta_goal
+
+class ContextModelGlobal(nn.Module):
+
+    def __init__(
+        self, context_model_combined=None, context_model_delta=None,  
+        time_emb= 16, out_dim=64, n_layers=1, act="relu", **kwargs
+    ):
+        assert not context_model_combined is None
+        super().__init__()
+
+        self.context_model_combined = context_model_combined
+        self.context_model_qs = context_model_combined
+
+        self.context_delta = context_model_delta
+
+        self.in_dim = self.context_model_combined.out_dim
+                
+        self.context_progress = None 
+
+        if time_emb : # not None or 0
+            self.context_progress = SinusoidalPosEmb(time_emb)
+
+        if self.context_progress : 
+            self.in_dim += self.context_progress.dim
+
+        if self.context_delta :
+            self.in_dim += self.context_delta.out_dim
+
+        self.out_dim = out_dim
+        self.net = MLP(self.in_dim, self.out_dim, hidden_dim=out_dim, n_layers=n_layers, act=act)
+
+    def forward(
+        self, start_state_normalized = None, goal_state_normalized=None, 
+        full_ee_goal_orientation_normalized=None, full_ee_goal_position_normalized=None, 
+        progress = None, delta_to_goal_normalized = None,
+        **kwargs
+    ):
+        full_qs_normalized = torch.cat([start_state_normalized, goal_state_normalized], dim=-1)
+        emb_c = self.context_model_combined(qs_normalized=full_qs_normalized, 
+                                            ee_goal_orientation_normalized=full_ee_goal_orientation_normalized,
+                                            ee_goal_position_normalized=full_ee_goal_position_normalized)
+        emb = [emb_c]
+        if self.context_progress : 
+            emb_progress = self.context_progress(progress)
+            emb.append(emb_progress)
+        
+        # if self.context_delta : 
+        #     emb_delta = self.context_delta(delta_to_goal_normalized)
+        #     emb.append(emb_delta)
+
+        emb = torch.cat(emb, dim=-1)
+    
+        global_emb = self.net(emb)
+        return global_emb
+

@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from mpd import models, losses, summaries
 from mpd.datasets.trajectories_dataset_bspline import adjust_bspline_number_control_points, TrajectoryDatasetBspline
 from mpd.datasets.trajectories_dataset_waypoints import TrajectoryDatasetWaypoints, adjust_waypoints
+from mpd.datasets.trajectories_dataset_comp import TrajectoryCompDatasetBspline, TrajectoryCompDatasetWaypoint
 from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBspline
 from mpd.parametric_trajectory.trajectory_waypoints import ParametricTrajectoryWaypoints
 from mpd.paths import DATASET_BASE_DIR
@@ -128,7 +129,12 @@ def get_planning_task_and_dataset(
             tensor_args=tensor_args,
         )
 
-        dataset_class = TrajectoryDatasetBspline
+    
+        if kwargs.get('is_train_comp', False ) : 
+            dataset_class = TrajectoryCompDatasetBspline
+           
+        else : 
+            dataset_class = TrajectoryDatasetBspline
 
     elif "ParametricTrajectoryWaypoints" in parametric_trajectory_class:
         # Adjust the number of waypoints to match the Unet architecture.
@@ -155,7 +161,11 @@ def get_planning_task_and_dataset(
             phase_time_args=phase_time_args,
             tensor_args=tensor_args,
         )
-        dataset_class = TrajectoryDatasetWaypoints
+        if kwargs.get('is_train_comp', False ) : 
+            dataset_class = TrajectoryCompDatasetWaypoint
+           
+        else : 
+            dataset_class = TrajectoryDatasetWaypoints
     else:
         raise ValueError(f"Unknown parametric trajectory class: {parametric_trajectory_class}")
 
@@ -199,7 +209,7 @@ def get_planning_task_and_dataset(
         tensor_args=tensor_args,
         **kwargs,
     )
-    print(full_dataset)
+    print(f"get_planning_task_and_dataset:",full_dataset,f",is_train_comp : {kwargs.get('is_train_comp', False )}",)
 
     if load_indices:
         # load the indices of training and validation sets (for evaluation)

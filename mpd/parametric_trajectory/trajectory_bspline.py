@@ -55,19 +55,10 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
         self.remove_outer_control_points = remove_outer_control_points
         self.keep_last_control_point = keep_last_control_point
 
-        # Comp stage selection (legacy flag still supported)
-        #legacy_remove = kwargs.get("remove_from_start_control_points", None)
+        # Comp stage selection 
         comp_stage: Optional[CompEnum] = kwargs.get("comp_stage", None)
-        # if comp_stage is None:
-        #     if legacy_remove is None:
-        #         comp_stage = CompEnum.DEFAULT
-        #     elif legacy_remove is True:
-        #         comp_stage = CompEnum.START
-        #     elif legacy_remove is False:
-        #         comp_stage = CompEnum.END
+
         self.comp_stage = comp_stage or CompEnum.DEFAULT
-        # keep legacy attribute for compatibility
-        # self.remove_from_start_control_points = legacy_remove
 
     def remove_control_points_fn(self, cps):
         # Remove the first and last control points in position, velocity and acceleration

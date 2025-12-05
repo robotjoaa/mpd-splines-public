@@ -129,6 +129,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
             self.field_key_context_qs,
             self.field_key_context_ee_goal_orientation,
             self.field_key_context_ee_goal_position,
+            *kwargs.get('extra_keys',[])
         ]
         self.normalize_ee_pose_goal = normalize_ee_pose_goal
         if normalize_ee_pose_goal:
@@ -514,6 +515,8 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         # -------------------------------- Visualize ---------------------------------
         if task_id is None:
             task_id = np.random.choice(list(self.map_task_id_to_control_points_id.keys()))
+        
+        #import pdb; pdb.set_trace()
         idxs = np.asarray(self.map_task_id_to_control_points_id[task_id])
         control_points = self.fields[self.field_key_control_points][idxs]
         control_points = to_torch(control_points, **self.tensor_args)

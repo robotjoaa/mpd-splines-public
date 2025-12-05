@@ -25,8 +25,9 @@ from mpd.models.diffusion_models.sample_functions import (
 
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import to_numpy, to_torch, clip_grad_by_norm, clip_grad_by_value
-from .comp_diffuser import utils
-from .comp_diffuser import Traj_Blender
+from .comp_diffuser import utils, Traj_Blender, Unet1D_TjTi_Stgl_Cond_V3
+
+from mpd.models.diffusion_models import CompDiffusionModel
 from mpd.inference.cost_guides_comp import CostGuideManagerCompTrajectory
 
 def make_timesteps(batch_size, i, device):
@@ -34,197 +35,37 @@ def make_timesteps(batch_size, i, device):
     return t
 
 
-class CompDiffusionModel(nn.Module, ABC):
+class CompDiffusionModelv2(CompDiffusionModel):
     """
-    A compositional variant of GaussianDiffusionModel.
+    Improved CompDiffusionModel with 
+    Global, local loss, cfg
+    Uses improved context model with global, local models
 
-    - Uses the existing classifier-guidance aware sampling loops from the base
-      class (ddpm/ddim) to generate individual trajectory segments.
-    - Composes `n_components` segments with a fixed-length overlap and blends
-      those overlaps into a single long trajectory.
-
-    Notes:
-    * The current implementation expects the caller to prepare a list of
-      `hard_conds` dicts, one per component. This keeps us aligned with the
-      existing API and avoids introducing a new CFG-style conditioner. A higher
-      level wrapper (e.g., a policy/planner) can construct those dicts using
-      start/goal/overlap context similar to comp_diffuser.
-    * Overlap blending is adapted from `comp_diffuser/traj_blender.py`, but kept
-      lightweight and numpy-based here.
+    training part modified
+    
     """
 
     def __init__(
         self,
-        denoise_fn=None,
-        variance_schedule="cosine",
-        n_diffusion_steps=100,
-        clip_denoised=True,
-        predict_epsilon=True,
-        loss_type='l2_inv_v3',
-        # context_model=None,
-        horizon=None,
-        len_ovlp_cd=None,
-        comp_config={},
         **kwargs,
     ):
-        super().__init__()
-        #self.model = MyDataParallel(denoise_fn)
-        self.model = denoise_fn # Unet1D_TjTi_Stgl_Cond_V2
+        super().__init__(**kwargs)
 
-        # context_model defined inside denoise_fn
-        # self.context_model = context_model
+        assert isinstance(self.model, Unet1D_TjTi_Stgl_Cond_V3)
+        assert self.guide_mode != 'default' # train using cfg 
+        assert self.predict_epsilon
 
-        self.n_diffusion_steps = n_diffusion_steps
+        self.condition_guidance_l = kwargs.get('condition_guidance_l', 1.5)
+        self.condition_guidance_g = kwargs.get('condition_guidance_g', 0.5)
+        # Loss weight 
+        self.lambda_l = kwargs.get('lambda_l', 1)
+        self.lambda_g = kwargs.get('lambda_g', 1)
 
-        self.state_dim = self.model.state_dim
+        print_color(f"CompDiffusionModelv2 {self.condition_guidance_g =}, {self.condition_guidance_l=}")
+        print_color(f"CompDiffusionModelv2 {self.lambda_g=}, {self.lambda_l=}")
 
-        self.horizon = horizon # sm_horizon
-        self.len_ovlp_cd = len_ovlp_cd 
-        if variance_schedule == "cosine":
-            betas = cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999)
-        elif variance_schedule == "exponential":
-            betas = exponential_beta_schedule(n_diffusion_steps, beta_start=1e-4, beta_end=1.0)
-        else:
-            raise NotImplementedError
-
-        alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, axis=0)
-        alphas_cumprod_prev = torch.cat([torch.ones(1), alphas_cumprod[:-1]])
-
-        self.clip_denoised = clip_denoised
-        self.predict_epsilon = predict_epsilon
-
-        self.register_buffer("betas", betas)
-        self.register_buffer("alphas_cumprod", alphas_cumprod)
-        self.register_buffer("alphas_cumprod_prev", alphas_cumprod_prev)
-
-        # calculations for diffusion q(x_t | x_{t-1}) and others
-        self.register_buffer("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod))
-        self.register_buffer("sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod))
-        self.register_buffer("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod))
-        self.register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
-        self.register_buffer("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1))
-
-        # calculations for posterior q(x_{t-1} | x_t, x_0)
-        posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
-        self.register_buffer("posterior_variance", posterior_variance)
-
-        ## log calculation clipped because the posterior variance
-        ## is 0 at the beginning of the diffusion chain
-        self.register_buffer("posterior_log_variance_clipped", torch.log(torch.clamp(posterior_variance, min=1e-20)))
-        self.register_buffer("posterior_mean_coef1", betas * np.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod))
-        self.register_buffer(
-            "posterior_mean_coef2", (1.0 - alphas_cumprod_prev) * np.sqrt(alphas) / (1.0 - alphas_cumprod)
-        )
-
-        ## get loss coefficients and initialize objective
-        self.loss_fn = Losses[loss_type]()
-
-        ### for compose 
-        self.comp_config = comp_config
-        self.is_spline = comp_config.get('is_spline', False)
-        self.use_ddim = True
-        self.guide_mode = comp_config.get('guide_mode', 'default') # default (cg), cfg, hybrid
-        self.len_overlap = self.comp_config['len_ovlp_cd']
-        self.hzn_step_size = self.n_diffusion_steps  # TODO: revisit; placeholder for API symmetry
-        # self.use_cfg = self.comp_config.get('use_cfg', False)
-        self.condition_guidance_w = self.comp_config.get('condition_guidance_w', 2.0)
-        self.tr_inpat_prob = self.comp_config['tr_inpat_prob']
-        self.tr_ovlp_prob = self.comp_config['tr_ovlp_prob']
-        self.tr_all_drop_prob = self.comp_config.get('tr_1side_drop_prob', 0.2)
-        print_color(f"{self.tr_all_drop_prob=}")
-
-        self.eval_st_only = comp_config.get('eval_st_only', False)
-
-        # self.tr_no_ovlp_none = self.comp_config.get('tr_no_ovlp_none', False)
-        print_color(f"{self.eval_st_only=}")
-        assert self.tr_inpat_prob + self.tr_ovlp_prob == 1.0
-        
-        self.blend_type = comp_config.get('blend_type',"exponential")
-        self.blend_beta = comp_config.get('blend_beta',3)
-
-        # used when inference 
-        self.tj_blder = Traj_Blender(
-            self.horizon,
-            self.len_ovlp_cd,
-            self.is_spline,
-            self.blend_type,
-            exp_beta = self.blend_beta
-        )
-
-    # ------------------------------------------ sampling ------------------------------------------#
-    def predict_noise_from_start(self, x_t, t_2d, x0):
-        if self.predict_epsilon : 
-            return x0
-        else : 
-            return (
-                extract_2d(self.sqrt_recip_alphas_cumprod, t_2d, x_t.shape) * x_t - x0) / \
-                        extract_2d(self.sqrt_recipm1_alphas_cumprod, t_2d, x_t.shape
-                )
-
-
-    def predict_start_from_noise(self, x_t, t_2d, noise):
-        '''
-            if self.predict_epsilon, model output is (scaled) noise;
-            otherwise, model predicts x0 directly
-        '''
-        assert t_2d.ndim == 2
-        # pdb.set_trace()
-        ## x_t: B, H, dim
-        if self.predict_epsilon:
-            ## directly switch to 2d version
-            return (
-                ## B,H,1 * B,H,dim
-                extract_2d(self.sqrt_recip_alphas_cumprod, t_2d, x_t.shape) * x_t -
-                extract_2d(self.sqrt_recipm1_alphas_cumprod, t_2d, x_t.shape) * noise
-            )
-        else:
-            return noise
-
-    def q_posterior(self, x_start, x_t, t):
-        '''from x_0 and x_t to x_{t-1}
-        see equeation 6 and 7
-        '''
-        # pdb.set_trace() ## check buffer dim
-        ## directly, e.g., 10,384,6
-        posterior_mean = (
-            extract_2d(self.posterior_mean_coef1, t, x_t.shape) * x_start +
-            extract_2d(self.posterior_mean_coef2, t, x_t.shape) * x_t
-        )
-        ## now 2D, not 1D in vanilla diffusion
-        ## both two e.g., [B=10, H=384, 1]
-        posterior_variance = extract_2d(self.posterior_variance, t, x_t.shape)
-        posterior_log_variance_clipped = extract_2d(self.posterior_log_variance_clipped, t, x_t.shape)
-        return posterior_mean, posterior_variance, posterior_log_variance_clipped
-
-    ### TODO : implement ddpm for classifier guidance
-    #def p_mean_variance(self, x, hard_conds, context_d, t, prior_weight_with_guide=1.0, **kwargs):
-    #def p_sample(self, x, tj_cond, timesteps, mask_same_t=None):
-    #def p_sample_loop()
-    '''
-    g_cond : 
-    do_cond 
-    traj_full
-    t_type
-    stgl_cond
-    '''
-    
-    def split_hard_conds(self, hard_conds, is_start = True, max_cond = 3) :
-        res = {}
-        if is_start : 
-            for i, v in hard_conds.items() : 
-                if i < max_cond :
-                    res[i] = v
-    
-        else : 
-            for i, v in hard_conds.items() : 
-                if i > max_cond :
-                    res[i] = v
-
-        return res
-
+    # ------------------------------------------ training ------------------------------------------#
     # called from render_samples
-    # self.get_tj_cond(x, hard_conds, context_d, t)
     def get_tj_cond(self, x, g_cond, context_d, timesteps):
         """
         TODO: Directly copy from p_sample_loop, probably we can later use this func in the func
@@ -321,16 +162,9 @@ class CompDiffusionModel(nn.Module, ABC):
         '''
             conditions : [ (time, state), ... ]
         '''
-        # assert False, 'not finished'
         #device = self.betas.device
         #batch_size = len(g_cond['traj_full']) ## TODO: check
 
-        # if tj_cond['st_ovlp_is_drop'] is not None:
-        #     batch_size = len(tj_cond['st_ovlp_traj'])
-        # elif  tj_cond['end_ovlp_is_drop'] is not None:
-        #     batch_size = len(tj_cond['end_ovlp_traj'])
-        # else:
-        #     assert False
         # pdb.set_trace()
 
         horizon = horizon or self.horizon
@@ -345,141 +179,6 @@ class CompDiffusionModel(nn.Module, ABC):
         else : 
             raise NotImplementedError
         
-    # @torch.no_grad()
-    # def sample_unCond(self, batch_size, *args, horizon=None, **kwargs):
-    #     '''
-    #         batch_size : int
-    #     '''
-    #     device = self.betas.device
-    #     horizon = horizon or self.horizon
-    #     shape = (batch_size, horizon, self.observation_dim)
-    #     g_cond = dict(do_cond=False)
-    #     ## placeholder
-
-    #     return self.p_sample_loop(shape, g_cond, *args, **kwargs)
-
-    @torch.no_grad()
-    def ddim_sample_loop(
-        self,
-        shape_x,
-        # hard_conds,
-        g_cond = None, 
-        context_d=None,
-        return_chain=False,
-        return_chain_x_recon=False,
-        ddim_eta=0.0,
-        ddim_skip_type="uniform",
-        ddim_sampling_timesteps=None,
-        t_start_guide=torch.inf,
-        scale_grad_by_one_minus_alpha=False,
-        guide=None,
-        guide_lr=0.05,
-        n_guide_steps=1,
-        max_perturb_x=0.1,
-        clip_grad=False,
-        clip_grad_rule="value",  # 'norm', 'value'
-        max_grad_norm=1.0,  # clip the norm of the control point gradients
-        max_grad_value=1.0,  # clip the control point gradients
-        n_diffusion_steps_without_noise=0,
-        ddim_scale_grad_prior=1.0,
-        compute_costs_with_xrecon=False,
-        results_ns=None,
-        cfg_zero_end_ovlp=False,
-        **sample_kwargs,
-    ):
-        # Adapted from https://github.com/ezhang7423/language-control-diffusion/blob/63cdafb63d166221549968c662562753f6ac5394/src/lcd/models/diffusion.py#L226
-
-        device = self.betas.device
-        batch_size = shape_x[0]
-        total_timesteps = self.n_diffusion_steps
-        sampling_timesteps = ddim_sampling_timesteps if ddim_sampling_timesteps is not None else total_timesteps
-        assert (
-            sampling_timesteps <= total_timesteps
-        ), f"sampling_timesteps={sampling_timesteps} > total_timesteps={total_timesteps}"
-
-        # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
-        time_pairs = ddim_create_time_pairs(
-            total_timesteps, sampling_timesteps, ddim_skip_type, n_diffusion_steps_without_noise
-        )
-
-        clip_grad_fn = lambda x: x
-        if clip_grad and clip_grad_rule == "norm":
-            clip_grad_fn = partial(clip_grad_by_norm, max_grad_norm=max_grad_norm)
-        elif clip_grad and clip_grad_rule == "value":
-            clip_grad_fn = partial(clip_grad_by_value, max_grad_value=max_grad_value)
-
-        x = torch.randn(shape_x, device=device)
-        # x = apply_hard_conditioning(x, hard_conds)
-
-        chain = [x] if return_chain else None
-        chain_x_recon = [x] if return_chain_x_recon else None
-
-        
-        # context_emb = None
-        # if context_d is not None:
-        #     context_emb = self.context_model(**context_d)
-
-        for k_step, (_time, _time_next) in enumerate(time_pairs):
-            if _time == _time_next:
-                continue
-            if _time_next < 0:
-                _time = 1
-                _time_next = 0
-            # should be 2d (batch_size, self.horizon)
-            t = torch.full((batch_size, self.horizon), _time, device=device, dtype=torch.long)
-            # prev_timesteps
-            t_next = torch.full((batch_size, self.horizon), _time_next, device=device, dtype=torch.long)
-            
-
-            x, tj_cond = self.get_tj_cond(x, g_cond, context_d, t)
-
-            assert guide is None # guide only applied when using ddim_sample alone (during evaluation )
-
-            tmp = self.ddim_sample(
-                    x = x, 
-                    tj_cond = tj_cond, 
-                    t = t,
-                    t_next = t_next, # 2d
-                    sampling_timesteps=sampling_timesteps,
-                    current_step = k_step, 
-                    ddim_eta = ddim_eta, 
-                    t_start_guide= t_start_guide,
-                    scale_grad_by_one_minus_alpha=scale_grad_by_one_minus_alpha,
-                    guide=guide,
-                    guide_lr=guide_lr,
-                    n_guide_steps=n_guide_steps,
-                    max_perturb_x=max_perturb_x,
-                    clip_grad_fn=clip_grad_fn,
-                    ddim_final_add_noise= _time_next >= 1,
-                    return_x_recon=return_chain_x_recon,
-                    ddim_scale_grad_prior=ddim_scale_grad_prior,
-                    compute_costs_with_xrecon=compute_costs_with_xrecon,
-                    results_ns=results_ns,
-                    g_cond=g_cond,
-                    cfg_zero_end_ovlp=cfg_zero_end_ovlp,
-                    **sample_kwargs,
-                )
-            if return_chain_x_recon : 
-                x, x_recon = tmp
-            else :
-                x = tmp
-
-            if return_chain:
-                chain.append(x.clone())
-            if return_chain_x_recon:
-                chain_x_recon.append(x_recon.clone())
-
-        chains = []
-        if return_chain:
-            chain = torch.stack(chain, dim=1)
-            chains.append(chain)
-
-        if return_chain_x_recon:
-            chain_x_recon = torch.stack(chain_x_recon, dim=1)
-            chains.append(chain_x_recon)
-
-        return x, *chains
-
     @torch.no_grad()
     def ddim_sample(self, x, 
         tj_cond, 
@@ -515,19 +214,22 @@ class CompDiffusionModel(nn.Module, ABC):
         # denoising noise
         with TimerCUDA() as t_generator:
 
-            if self.guide_mode != "default" and tj_cond['do_cond']: # cfg
-                x_2, t_2d_2, tj_cond_2 = batch_repeat_tensor_in_dict(x, t, tj_cond, n_rp=2)
+            if tj_cond['do_cond']: # cfg
+                x_3, t_2d_3, tj_cond_3 = batch_repeat_tensor_in_dict(x, t, tj_cond, n_rp=3)
                 if cfg_zero_end_ovlp:
-                    tj_cond_2['force_zero_end_ovlp'] = True
-                assert (t_2d_2[0] == t_2d_2[0,0]).all(), 'sanity check'
-                t_1d_2 = t_2d_2[:, 0]
+                    tj_cond_3['force_zero_end_ovlp'] = True
+                assert (t_2d_3[0] == t_2d_3[0,0]).all(), 'sanity check'
+                t_1d_3 = t_2d_3[:, 0]
             
-                out = self.model(x_2, t_1d_2, tj_cond_2, force_dropout=True, half_fd=True)
-                out_cd = out[:len(x), :, :]
-                out_uncd = out[len(x):, :, :]
-                model_out = out_uncd + self.condition_guidance_w * (out_cd - out_uncd)
+                out = self.model(x_3, t_1d_3, tj_cond_3, only_uncond=True )
+                out_local = out[:len(x), :, :]
+                out_global = out[len(x):-len(x),:,:]
+                out_uncd = out[-len(x):, :, :]
+                model_out = out_uncd \
+                    + self.condition_guidance_g * (out_global - out_uncd) \
+                    + self.condition_guidance_l * (out_local - out_uncd)
                 
-            else : # original 
+            else : # do_cond is false, local is all drop 
                 model_out = self.small_model_pred(x, t, tj_cond)
 
         if results_ns is not None:
@@ -543,14 +245,15 @@ class CompDiffusionModel(nn.Module, ABC):
             else:
                 assert RuntimeError()
 
-            # if use classifier guidance, use modified grad 
-            if self.guide_mode != "cfg" : 
+            # # if use classifier guidance, use modified grad 
+            if self.guide_mode != "cfg" : # hybrid
                 # default self.predict_epsilon == True
                 # _pred_noise = _grad_prior (modified gradient from classifier guidance)
                 if self.predict_epsilon : 
                     _pred_noise = self.predict_noise_from_start(_x, t, x0=_grad_prior)
-                else : 
+                else :
                     raise NotImplementedError
+
             else : 
                 if use_clipped_model_output : # always true
                     _pred_noise = (_x - alpha.sqrt() * _x_recon) / beta_prod_t.sqrt()
@@ -720,119 +423,94 @@ class CompDiffusionModel(nn.Module, ABC):
 
     #------------------------------------------ training ------------------------------------------#
 
-    def q_sample(self, x_start, t_2d, noise=None):
-        '''add noise to x_t from x_0
-        mask_no_noise: bool (B,H), if True, then do not add any noise to x_start
-        '''
-        assert t_2d.ndim == 2 # B, horizon
-
-        if noise is None:
-            noise = torch.randn_like(x_start)
-        
-        ## vanilla diffusion: (B, 1, 1) * x_start: (B, H, dim) e.g., [32, 128, 6]
-        # sample = (
-        #     extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
-        #     extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
-        # )
-
-        ## Ours: t (B, H, 1) * x_start (B, H, dim)
-        q_coef1 = extract_2d(self.sqrt_alphas_cumprod, t_2d, x_start.shape)
-        q_coef2 = extract_2d(self.sqrt_one_minus_alphas_cumprod, t_2d, x_start.shape)
-
-        ## when t=0, 0.9999 * x_start + 0.0137 * noise 
-        sample = q_coef1 * x_start + q_coef2 * noise
-
-        return sample
-
     def p_losses(self, x_start, x_noisy, noise, t_2d, tj_cond):
         
-        batch_loss_w = torch.ones_like(x_start) # x_start[:,:,:1]
-        # There can be multiple inpat
-        if tj_cond['idx_st_inpat'] is not None : 
-            batch_loss_w[tj_cond['is_st_inpat'],tj_cond['idx_st_inpat']] = 0.
-        else :
-            # should be all None. 
-            assert torch.all(tj_cond['is_st_inpat']) == False
-        if tj_cond['idx_end_inpat'] is not None : 
-            batch_loss_w[tj_cond['is_end_inpat'],tj_cond['idx_end_inpat']] = 0.
-        else :
-            assert torch.all(tj_cond['is_end_inpat']) == False
+        batch_loss_w = torch.ones_like(x_start)  # [B, H, D]
+
+        def zero_mask(mask, idx):
+            if idx is None or (isinstance(idx, bool) and not idx):
+                return
+            idx_t = torch.as_tensor(idx, device=batch_loss_w.device)
+            rows = torch.nonzero(mask, as_tuple=False).squeeze(-1)
+            if idx_t.dim() == 0:  # scalar
+                batch_loss_w[rows, idx_t.item()] = 0.0
+            else:
+                # Apply the same column indices to every masked row.
+                batch_loss_w[rows.unsqueeze(-1), idx_t.unsqueeze(0), :] = 0.0
+
+        zero_mask(tj_cond.get("is_st_inpat", torch.zeros_like(batch_loss_w[:, 0, 0], dtype=torch.bool)),
+                  tj_cond.get("idx_st_inpat", None))
+        zero_mask(tj_cond.get("is_end_inpat", torch.zeros_like(batch_loss_w[:, 0, 0], dtype=torch.bool)),
+                  tj_cond.get("idx_end_inpat", None))
 
         assert x_start.shape[1] == self.horizon 
         # diffusion model
-        #x_recon = self.model(x_noisy, t, context_emb)
-        #x_recon = apply_hard_conditioning(x_recon, hard_conds)
         # hard_conds considered with batch_loss_w
-        x_recon = self.small_model_pred(x_noisy, t_2d, tj_cond)
 
-        assert noise.shape == x_recon.shape
+        # get concatenation of three outputs
+
+        x_noisy_3, t_2d_3, tj_cond_3 = batch_repeat_tensor_in_dict(x_noisy, t_2d, tj_cond, n_rp=3)
+
+        assert (t_2d_3[0] == t_2d_3[0,0]).all(), 'sanity check'
+        
+        t_1d_3 = t_2d_3[:, 0]
+        
+        # local / uncond / global
+        out = self.model(x_noisy_3, t_1d_3, tj_cond_3)
+        x_recon_l = out[:len(x_noisy), :, :]
+        x_recon_u = out[len(x_noisy):-len(x_noisy), :, :]
+        x_recon_g = out[-len(x_noisy):,:,:]
+
+        # repeat noise, batch_loss_w 3 times to match x_recon 
+        # noise = noise.repeat([3] + [1,]*len(noise.shape[1:]))
+        # batch_loss_w = batch_loss_w.repeat([3] + [1,]*len(batch_loss_w.shape[1:]))
+
+        # create weight vector
+        # lam_u = torch.ones_like([x_start.shape[0] + [1,]*len(x_start.shape[1:])])
+        # lam_l = self.lambda_l * torch.ones_like([x_start.shape[0] + [1,]*len(x_start.shape[1:])])
+        # lam_g = self.lambda_g * torch.ones_like([x_start.shape[0] + [1,]*len(x_start.shape[1:])])
+
 
         if self.predict_epsilon:
-            loss, info = self.loss_fn(x_recon, noise, ext_loss_w=batch_loss_w)
+            loss_l, _ = self.loss_fn(x_recon_l, noise, ext_loss_w=batch_loss_w)
+            loss_u, _ = self.loss_fn(x_recon_u, noise, ext_loss_w=batch_loss_w)
+            loss_g, _ = self.loss_fn(x_recon_g, noise, ext_loss_w=batch_loss_w)
         else:
-            loss, info = self.loss_fn(x_recon, x_start, ext_loss_w=batch_loss_w)
-
+            raise NotImplementedError
+            #loss, info = self.loss_fn(x_recon, x_start, ext_loss_w=batch_loss_w)
+        info = dict(
+            loss_uncond = loss_u,
+            loss_local = loss_l,
+            loss_global = loss_g,
+        )
+        loss = loss_u + loss_l * self.lambda_l + loss_g * self.lambda_g
         return loss, info
-    # should be this format to match GaussianDiffusionLoss
-    #def loss(self, x, context_d, *args):
-    def loss(self, x_clean, context_d, hard_conds):
-        # cond_st_gl is start, end hard conds. 
-        # it can be infered from context_d
+    
+    # # should be this format to match GaussianDiffusionLoss
+    # def loss(self, x_clean, context_d, hard_conds):
+    #     # cond_st_gl is start, end hard conds. 
+    #     # it can be infered from context_d
 
-        batch_size = x_clean.shape[0]
-        # pdb.set_trace() ## check x dim
-        t_1d = torch.randint(0, self.n_diffusion_steps, (batch_size, 1), device=x_clean.device).long()
-        ## B,H
-        t_2d = t_1d.expand(-1, self.horizon)
-        #t_2d = torch.repeat_interleave(t_1d, repeats=self.horizon, dim=1)
+    #     batch_size = x_clean.shape[0]
+    #     # pdb.set_trace() ## check x dim
+    #     t_1d = torch.randint(0, self.n_diffusion_steps, (batch_size, 1), device=x_clean.device).long()
+    #     ## B,H
+    #     t_2d = t_1d.expand(-1, self.horizon)
+    #     #t_2d = torch.repeat_interleave(t_1d, repeats=self.horizon, dim=1)
 
-        noise = torch.randn_like(x_clean)
-        x_noisy = self.q_sample(x_start=x_clean, t_2d=t_2d, noise=noise)
+    #     noise = torch.randn_like(x_clean)
+    #     x_noisy = self.q_sample(x_start=x_clean, t_2d=t_2d, noise=noise)
 
-        ## choose training conditioning scheme
-        x_noisy, tj_cond = self.create_train_tj_cond(
-            x_clean, x_noisy, t_1d[:, 0], t_1d[:,0].clone(), context_d, hard_conds, is_rand=True)
+    #     ## choose training conditioning scheme
         
-        diffuse_loss, info = self.p_losses(x_clean[:, :, :], x_noisy, noise, t_2d, tj_cond)
-            
-        total_loss = diffuse_loss
-        return total_loss, info
+    #     x_noisy, tj_cond = self.create_train_tj_cond(
+    #         x_clean, x_noisy, t_1d[:, 0], t_1d[:,0].clone(), context_d, hard_conds, is_rand=True)
+        
+    #         ### make each tj_cond_* from tj_cond output
+    #     total_loss, total_info = self.p_losses(x_clean[:, :, :], x_noisy, noise, t_2d, tj_cond)
+    
+    #     return total_loss, total_info
 
-# ------------------------------------------ warmup ------------------------------------------#
-    @torch.no_grad()
-    def warmup(self, shape_x, device="cuda"):
-        batch_size, n_support_points, state_dim = shape_x
-        x = torch.randn(shape_x, device=device)
-        t = make_timesteps(batch_size, 1, device)
-        # context_emb = None
-        #if self.context_model is not None:
-        #context_emb = torch.randn(batch_size, self.context_model.out_dim, device=device)
-        tj_cond = {}
-        self.model(x, t, tj_cond, warm_up = True)
-
-
-    def extract_ovlp_from_full(self, x: torch.Tensor):
-        """x: either np or tensor"""
-        st_traj = x[:, :self.len_ovlp_cd, :]
-        end_traj = x[:, -self.len_ovlp_cd:, :]
-        if torch.is_tensor(st_traj):
-            assert torch.is_tensor(end_traj)
-            st_traj = st_traj.detach().clone()
-            end_traj = end_traj.detach().clone()
-        else:
-            assert type(st_traj) == np.ndarray
-            assert type(end_traj) == np.ndarray
-
-        return st_traj, end_traj
-
-
-    '''
-    original cond_st_gl
-    return {
-                0: observations[0],
-                self.horizon - 1: observations[-1],
-            }
-    '''
     def create_train_tj_cond(self, x_clean: torch.Tensor, 
                              x_noisy: torch.Tensor, ## for model input, change inpainting part
                              t_1d_st: torch.Tensor, 
@@ -854,33 +532,49 @@ class CompDiffusionModel(nn.Module, ABC):
         st_cd_use_inpat = ~ st_cd_use_ovlp
         end_cd_use_inpat = ~ end_cd_use_ovlp
 
-        if self.guide_mode != "default" : 
-            all_drop_prob = self.tr_all_drop_prob ## 0.15
 
-            st_is_all_drop = torch.rand( size=(batch_size,), device=device ) < all_drop_prob
-            end_is_all_drop = torch.rand( size=(batch_size,), device=device ) < all_drop_prob
+        #### no dropout
+        # if self.guide_mode != "default" : 
+        #     all_drop_prob = self.tr_all_drop_prob ## 0.15
 
-            ## set those to be dropout to False, so no condition at all for 0.15 * bs
-            st_cd_use_ovlp[st_is_all_drop] = False
-            st_cd_use_inpat[st_is_all_drop] = False
+        #     st_is_all_drop = torch.rand( size=(batch_size,), device=device ) < all_drop_prob
+        #     end_is_all_drop = torch.rand( size=(batch_size,), device=device ) < all_drop_prob
 
-            end_cd_use_ovlp[end_is_all_drop] = False
-            end_cd_use_inpat[end_is_all_drop] = False
+        #     ## set those to be dropout to False, so no condition at all for 0.15 * bs
+        #     st_cd_use_ovlp[st_is_all_drop] = False
+        #     st_cd_use_inpat[st_is_all_drop] = False
+
+        #     end_cd_use_ovlp[end_is_all_drop] = False
+        #     end_cd_use_inpat[end_is_all_drop] = False
+
+
+
 
         ###### TODO:
         ###### We need to modify the corresponding samples for inpainting
         # pdb.set_trace() ## check cond_st_gl --> 0: (B,2), horizon-1:(B,2)
 
         cond_st = self.split_hard_conds(hard_conds, is_start=True)
+        num_st_cond = len(cond_st)
+
         for k,v in cond_st.items() : 
             cond_st[k] = v[st_cd_use_inpat]
         x_noisy[ st_cd_use_inpat ] = apply_hard_conditioning( x_noisy[ st_cd_use_inpat ], cond_st)
+
+        idx_st_inpat = None 
+        if num_st_cond > 0 : 
+            idx_st_inpat = torch.as_tensor(list(cond_st.keys()), dtype=torch.long, device = device)
         ####
         cond_end = self.split_hard_conds(hard_conds, is_start=False)
+        num_end_cond = len(cond_end)
         # {self.horizon-1: hard_conds[self.horizon-1][end_cd_use_inpat]}
         for k,v in cond_end.items() : 
             cond_end[k] = v[end_cd_use_inpat]
         x_noisy[ end_cd_use_inpat ] = apply_hard_conditioning( x_noisy[ end_cd_use_inpat ], cond_end)
+
+        idx_end_inpat= None
+        if num_end_cond > 0 :
+            idx_end_inpat = torch.as_tensor(list(cond_end.keys()), dtype=torch.long, device = device)
 
         # pdb.set_trace() #### check if replace properly
 
@@ -928,13 +622,11 @@ class CompDiffusionModel(nn.Module, ABC):
             ## NEW
             'is_st_inpat': st_cd_use_inpat,
             'is_end_inpat': end_cd_use_inpat,
+            'idx_st_inpat' : idx_st_inpat, 
+            'idx_end_inpat' : idx_end_inpat,
             'context_d' : context_d
         }
         # pdb.set_trace() ## TODO: check
-        
-        # if self.guide_mode == "default" : # no drop
-        #     tj_cond['st_ovlp_is_drop'] = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
-        #     tj_cond['end_ovlp_is_drop'] = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
 
         return x_noisy, tj_cond
 
@@ -942,14 +634,14 @@ class CompDiffusionModel(nn.Module, ABC):
         
         ## simple model should take in only 1d
         assert (t_2d[0] == t_2d[0,0]).all(), 'sanity check'
+
+        ## only use for uncond output
+        assert tj_cond['do_cond'] in [None, False]
+
         t_1d = t_2d[:, 0]
-        pred_out = self.model(x, t_1d, tj_cond)
+        pred_out = self.model(x, t_1d, tj_cond, only_uncond=True)
 
         return pred_out
-
-    def get_total_hzn(self, num_comp):
-        return num_comp * self.horizon - \
-                    (num_comp - 1) * self.len_ovlp_cd
 
     def create_eval_tj_cond(self, 
                             x_et: torch.Tensor, ## x eval t
@@ -997,12 +689,14 @@ class CompDiffusionModel(nn.Module, ABC):
         #if 0 in hard_conds.keys():
         st_cond = self.split_hard_conds(hard_conds, is_start=True)
         num_st_cond = len(st_cond)
+
+
         if st_traj is None and num_st_cond > 0 : 
             # pdb.set_trace()
             # assert st_traj is None
             x_et = apply_hard_conditioning(x_et, st_cond)
             is_st_inpat = torch.ones(size=(batch_size,), dtype=torch.bool, device=device)
-            idx_st_inpat = torch.as_tensor(list(st_cond.keys()), dtype=torch.long, device = device)
+            idx_st_inpat =  torch.as_tensor(list(st_cond.keys()), dtype=torch.long, device = device)
         else:
             is_st_inpat = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
             idx_st_inpat = None
@@ -1030,7 +724,7 @@ class CompDiffusionModel(nn.Module, ABC):
             x_et = apply_hard_conditioning(x_et, end_cond)
             ## create 2 dimension is_end_inpat compatible for multiple hard conditions
             is_end_inpat = torch.ones(size=(batch_size,), dtype=torch.bool, device=device)
-            idx_end_inpat = torch.as_tensor(list(end_cond.keys()), dtype=torch.long, device = device)
+            idx_end_inpat =  torch.as_tensor(list(end_cond.keys()), dtype=torch.long, device = device)
         else:
             is_end_inpat = torch.zeros(size=(batch_size,), dtype=torch.bool, device=device)
             idx_end_inpat = None
@@ -1078,6 +772,7 @@ class CompDiffusionModel(nn.Module, ABC):
             end_traj = end_traj.clone()
 
         # pdb.set_trace()
+
         ## TODO: Add guide time range to tj_cond
         tj_cond = {
             'st_ovlp_is_drop': st_is_drop,
@@ -1093,7 +788,10 @@ class CompDiffusionModel(nn.Module, ABC):
             'is_end_inpat': is_end_inpat,
             'idx_st_inpat': idx_st_inpat, # used for batch_loss_w
             'idx_end_inpat': idx_end_inpat,
-            'context_d': context_d
+            'context_d': context_d,
+
+            ## eval_st
+            'force_zero_end_ovlp' : self.eval_st_only
         }
         # pdb.set_trace()
         
@@ -1142,32 +840,6 @@ class CompDiffusionModel(nn.Module, ABC):
                 assert tmp.ndim == 2
                 hard_conds[k] = einops.repeat(tmp, 'n_p d -> (n_p rr) d', rr=batch_size).clone()
 
-            # could have multiple hard_conds 
-            # ex) 0, 1, 2 / hzn-2, hzn-1, hzn 
-
-            # hard_cond = {
-            #     0: einops.repeat(st_gl[0,:,:], 'n_p d -> (n_p rr) d', rr=b_s).clone(),
-            #     hzn-1: einops.repeat(st_gl[1,:,:], 'n_p d -> (n_p rr) d', rr=b_s).clone(),
-            # }
-
-        #cur_time = time.time()
-
-        ## Run GPU Planning, x_dfu_all
-        ## a list of len n_comp, elem: cuda tensor (B,sm_hzn,dim)
-        # comp_pred_p_loop_n(self, ##
-        #                 shape,  # (batch_size, horizon)
-        #                 context_d,  
-        #                 hard_conds,
-        #                 n_comp,
-        #                 return_chain=False,
-        #                 ddim_eta=0.0,
-        #                 ddim_skip_type = "uniform",
-        #                 ddim_sampling_timesteps = None, 
-        #                 t_start_guide = torch.inf,
-        #                 n_diffusion_steps_without_noise = 0,
-        #                 guide = None,
-        #                 results_ns=None,
-        #                 **sample_kwargs)
         if return_chain : 
             trajs_list, chain = self.comp_pred_p_loop_n(
                 c_shape, context_d, hard_conds, n_comp=n_comp, return_chain=True, 
@@ -1258,6 +930,9 @@ class CompDiffusionModel(nn.Module, ABC):
 
         return pick_traj
 
+    # def update_context_d(self, tj_cond) :
+    #     context_d = tj_cond['context_d']
+    #     context_d['progress'] = n_comp
 
     @torch.no_grad()
     def comp_pred_p_loop_n(self, ##
@@ -1336,6 +1011,8 @@ class CompDiffusionModel(nn.Module, ABC):
                     
                     tj_cond_p_i['do_cond'] = do_cond # True 
                     tj_cond_p_i['idx'] = i_tj
+                    # update progress during evaluation
+                    tj_cond_p_i['context_d']['progress'] = i_tj/n_comp
                     # if self.use_ddim:
                     
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
@@ -1375,6 +1052,8 @@ class CompDiffusionModel(nn.Module, ABC):
                     
                     tj_cond_p_i['do_cond'] = do_cond # True
                     tj_cond_p_i['idx'] = i_tj
+                    # update progress during evaluation
+                    tj_cond_p_i['context_d']['progress'] = i_tj/n_comp
                     # if self.use_ddim:
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
                                 sampling_timesteps=sampling_timesteps,
@@ -1410,7 +1089,8 @@ class CompDiffusionModel(nn.Module, ABC):
                     
                     tj_cond_p_i['do_cond'] = do_cond # True
                     tj_cond_p_i['idx'] = i_tj
-
+                    # update progress during evaluation
+                    tj_cond_p_i['context_d']['progress'] = i_tj/n_comp
                     # if self.use_ddim:
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
                                 sampling_timesteps=sampling_timesteps,
@@ -1445,4 +1125,3 @@ class CompDiffusionModel(nn.Module, ABC):
         else:
             return x_p_list
         
-

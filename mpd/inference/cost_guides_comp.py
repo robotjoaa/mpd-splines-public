@@ -323,8 +323,10 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
                 tmp_kwargs["comp_stage"] = CompEnum.MID
                 ## force to have non zero vel, acc 
                 ## unless we want to stop between overlap
-                tmp_kwargs['zero_vel_at_start_and_goal'] = False
-                tmp_kwargs['zero_acc_at_start_and_goal'] = False
+                if 'zero_vel_at_start_and_goal' in tmp_kwargs : 
+                    tmp_kwargs['zero_vel_at_start_and_goal'] = False
+                if 'zero_acc_at_start_and_goal' in tmp_kwargs : 
+                    tmp_kwargs['zero_acc_at_start_and_goal'] = False
             else :
                 raise NotImplementedError 
 
