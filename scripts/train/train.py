@@ -7,8 +7,12 @@ from matplotlib import pyplot as plt
 from experiment_launcher import single_experiment_yaml, run_experiment
 from mpd import trainer
 from mpd.models import UNET_DIM_MULTS, TemporalUnet
-from mpd.models.diffusion_models.comp_diffuser.stgl_sml_temporal_cond_v2 import Unet1D_TjTi_Stgl_Cond_V2
-from mpd.models.diffusion_models.context_models import ContextModelQs, ContextModelEEPoseGoal, ContextModelCombined
+from mpd.models.diffusion_models.comp_diffuser import Unet1D_TjTi_Stgl_Cond_V2
+from mpd.models.diffusion_models.comp_diffuser import Unet1D_TjTi_Stgl_Cond_V3
+from mpd.models.diffusion_models.context_models import (
+    ContextModelQs, ContextModelEEPoseGoal, ContextModelCombined,
+    ContextModelGlobal,
+)
 from mpd.trainer.trainer import get_num_epochs
 from mpd.utils.loaders import get_planning_task_and_dataset, get_model, get_loss, get_summary
 from torch_robotics.torch_utils.seed import fix_random_seed
@@ -94,6 +98,9 @@ def experiment(
     seed: int = int(time.time()),
     # seed: int = 1726484688,
     results_dir: str = "logs",
+    ####################################
+    # comp
+    is_train_comp = False,
     ########################################################################
     # WandB
     wandb_mode: str = "disabled" if DEBUG else WANDB_MODE,  # "online", "offline" or "disabled"
@@ -132,6 +139,7 @@ def experiment(
         batch_size=batch_size,
         results_dir=results_dir,
         save_indices=True,
+        is_train_comp = is_train_comp,
         tensor_args=tensor_args,
     )
 
@@ -199,6 +207,7 @@ def experiment(
         network_config = dict(
             resblock_ksize=5, # fixed
             st_ovlp_model_config=ovlp_config,
+            use_end_ovlp_model=kwargs.get('use_end_ovlp_model'),
             end_ovlp_model_config=ovlp_config,
             ovlp_model_type='unet', # fixed
             inpaint_token_dim=16,
@@ -215,26 +224,130 @@ def experiment(
         )
 
         comp_configs = dict(
-            guide_mode = guide_mode,
-            len_ovlp_cd = len_ovlap, 
+            guide_mode = kwargs.get('guide_mode', "default"), 
+            len_ovlp_cd = kwargs.get('len_ovlp_cd', 4),
             condition_guidance_w = 2.0, # fixed
             tr_inpat_prob = 0.5,
             tr_ovlp_prob = 0.5,
             tr_1side_drop_prob = 0.20,
-            drop_context = drop_context,
-            train_st_only = False, 
+            drop_context = kwargs.get('drop_context', False),
+
         )
 
         model = get_model(
             model_class=generative_model_class,
             denoise_fn=Unet1D_TjTi_Stgl_Cond_V2(context_model = context_model, **unet_configs),
             horizon = full_dataset.n_learnable_control_points,
-            len_ovlp_cd = len_ovlap,
+            len_ovlp_cd = kwargs.get('len_ovlp_cd', 4),
             comp_config=comp_configs,
             tensor_args=tensor_args,
             **diffusion_configs,
             **unet_configs,
         )
+    elif generative_model_class == "CompDiffusionModelv2" : 
+        assert context_qs == False and context_ee_goal_pose == False 
+
+        ovlp_config=dict(
+            in_dim=full_dataset.state_dim,
+            hidden_dim=32,
+            conv_dim=32,
+            out_dim=64,
+            conv_kernel=3,
+            pool="mean",
+            use_time_emb=True,
+            time_emb_dim=32, 
+        )
+        network_config = dict(
+            resblock_ksize=5, # fixed
+            st_ovlp_model_config=ovlp_config,
+            use_end_ovlp_model=kwargs.get('use_end_ovlp_model'),
+            end_ovlp_model_config=ovlp_config,
+            ovlp_model_type='unet', # fixed
+            inpaint_token_dim=16,
+            inpaint_token_type='const', # fixed
+            res_block_type="ResidualTemporalBlock"
+        )
+
+        unet_configs = dict(
+            state_dim=full_dataset.state_dim,
+            n_support_points=full_dataset.n_learnable_control_points,
+            unet_input_dim=unet_input_dim,
+            dim_mults=UNET_DIM_MULTS[unet_dim_mults_option],
+            network_config=network_config,
+        )
+
+        comp_configs = dict(
+            guide_mode = kwargs.get('guide_mode', "cfg"), 
+            len_ovlp_cd = kwargs.get('len_ovlp_cd', 4),
+            condition_guidance_l = kwargs.get('condition_guidance_l',1.5), 
+            condition_guidance_g = kwargs.get('condition_guidance_g',0.5), 
+            lambda_l = kwargs.get('lambda_l',1),
+            lambda_g = kwargs.get('lambda_g',0.5),
+            tr_inpat_prob = 0.5,
+            tr_ovlp_prob = 0.5,
+            #tr_1side_drop_prob = 0.20, # not used
+            #drop_context = kwargs.get('drop_context', False), # not used
+        )
+
+        ### global context model
+        context_delta = None
+        # if kwargs.get('context_delta_goal', False) : 
+        #     context_delta = ContextModelQs(
+        #         in_dim=full_dataset.context_q_dim,
+        #         out_dim=context_q_out_dim,
+        #         n_layers=context_qs_n_layers,
+        #         act=context_qs_act,
+        #     )
+        
+        time_emb = None
+        if kwargs.get('context_progress',True) : 
+            time_emb = 16
+
+        g_context_qs = kwargs.get("global_context_qs", True)
+        g_context_ee_goal_pose = kwargs.get("global_context_ee_goal_pose", False)
+        context_model_qs = None
+        if g_context_qs:
+            context_model_qs = ContextModelQs(
+                in_dim=full_dataset.context_q_dim,
+                out_dim=context_q_out_dim,
+                n_layers=context_qs_n_layers,
+                act=context_qs_act,
+            )
+
+        context_model_ee_pose_goal = None
+        if g_context_ee_goal_pose:
+            context_model_ee_pose_goal = ContextModelEEPoseGoal(
+                out_dim=context_ee_goal_pose_out_dim,
+                n_layers=context_ee_goal_pose_n_layers,
+                act=context_ee_goal_pose_act,
+            )
+
+        context_model = None
+        if not (context_model_qs is None and context_model_ee_pose_goal is None):
+            context_model = ContextModelCombined(
+                context_model_qs=context_model_qs,
+                context_model_ee_pose_goal=context_model_ee_pose_goal,
+                out_dim=context_combined_out_dim,
+            )
+        if context_model :
+            context_model = ContextModelGlobal(context_model_combined = context_model,
+                               context_model_delta = context_delta,
+                               time_emb = time_emb # progress encoder
+                            )
+        else : 
+            raise NotImplementedError 
+
+        model = get_model(
+            model_class=generative_model_class,
+            denoise_fn= Unet1D_TjTi_Stgl_Cond_V3(context_model = context_model, **unet_configs),
+            horizon = full_dataset.n_learnable_control_points,
+            len_ovlp_cd = kwargs.get('len_ovlp_cd', 4),
+            comp_config=comp_configs,
+            tensor_args=tensor_args,
+            **diffusion_configs,
+            **unet_configs,
+        )
+
     else : 
         unet_configs = dict(
             state_dim=full_dataset.state_dim,
@@ -257,7 +370,7 @@ def experiment(
 
     ########################################################################
     # Loss
-    if generative_model_class in ["GaussianDiffusionModel", "CompDiffusionModel"]:
+    if generative_model_class in ["GaussianDiffusionModel", "CompDiffusionModel", "CompDiffusionModelv2"]:
         loss_class = "GaussianDiffusionLoss"
     elif generative_model_class == "CVAEModel":
         loss_class = "CVAELoss"

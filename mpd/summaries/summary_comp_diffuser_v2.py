@@ -10,7 +10,7 @@ from mpd.models.diffusion_models.sample_functions import apply_hard_conditioning
 from torch_robotics.trajectory.metrics import compute_ee_pose_errors
 from torch_robotics.torch_utils.torch_utils import to_torch, dict_to_device, DEFAULT_TENSOR_ARGS
 
-class SummaryCompDiffuser(SummaryBase):
+class SummaryCompDiffuserV2(SummaryBase):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -25,10 +25,16 @@ class SummaryCompDiffuser(SummaryBase):
         batch_size_statistics=10,
         planning_task=None,
         tensor_args=DEFAULT_TENSOR_ARGS,
+        loss_info=None,
         **kwargs,
     ):
 
         dataset = datasubset.dataset
+        # log other losses
+        for loss_name, loss_v in loss_info.items() : 
+            wandb.log(
+                    {f"{prefix}{loss_name}": loss_v}, step=train_step
+                )
 
         # ------------------------------------------------------------------------------------
         # Compute statistics on a set of random tasks
@@ -262,26 +268,26 @@ class SummaryCompDiffuser(SummaryBase):
         )
         wandb.log({f"{prefix}success": planning_task.compute_success_valid_trajs(q_pos_trajs)}, step=train_step)
 
-        # EE pose errors
-        ee_pose_goal = torch.cat(ee_goal_pose_l, dim=0)
-        ee_pose_goal_achieved = planning_task.robot.get_EE_pose(q_pos_trajs[..., -1, :])
-        error_ee_pose_goal_position, error_ee_pose_goal_orientation = compute_ee_pose_errors(
-            ee_pose_goal, ee_pose_goal_achieved
-        )
-        ee_pose_goal_error_position_norm = torch.linalg.norm(error_ee_pose_goal_position, dim=-1)
-        ee_pose_goal_error_orientation_norm = torch.rad2deg(torch.linalg.norm(error_ee_pose_goal_orientation, dim=-1))
+        # # EE pose errors
+        # ee_pose_goal = torch.cat(ee_goal_pose_l, dim=0)
+        # ee_pose_goal_achieved = planning_task.robot.get_EE_pose(q_pos_trajs[..., -1, :])
+        # error_ee_pose_goal_position, error_ee_pose_goal_orientation = compute_ee_pose_errors(
+        #     ee_pose_goal, ee_pose_goal_achieved
+        # )
+        # ee_pose_goal_error_position_norm = torch.linalg.norm(error_ee_pose_goal_position, dim=-1)
+        # ee_pose_goal_error_orientation_norm = torch.rad2deg(torch.linalg.norm(error_ee_pose_goal_orientation, dim=-1))
 
-        wandb.log(
-            {f"{prefix}ee_pose_goal_error_position_norm MEAN": ee_pose_goal_error_position_norm.mean()}, step=train_step
-        )
-        wandb.log(
-            {f"{prefix}ee_pose_goal_error_position_norm STD": ee_pose_goal_error_position_norm.std()}, step=train_step
-        )
-        wandb.log(
-            {f"{prefix}ee_pose_goal_error_orientation_norm MEAN": ee_pose_goal_error_orientation_norm.mean()},
-            step=train_step,
-        )
-        wandb.log(
-            {f"{prefix}ee_pose_goal_error_orientation_norm STD": ee_pose_goal_error_orientation_norm.std()},
-            step=train_step,
-        )
+        # wandb.log(
+        #     {f"{prefix}ee_pose_goal_error_position_norm MEAN": ee_pose_goal_error_position_norm.mean()}, step=train_step
+        # )
+        # wandb.log(
+        #     {f"{prefix}ee_pose_goal_error_position_norm STD": ee_pose_goal_error_position_norm.std()}, step=train_step
+        # )
+        # wandb.log(
+        #     {f"{prefix}ee_pose_goal_error_orientation_norm MEAN": ee_pose_goal_error_orientation_norm.mean()},
+        #     step=train_step,
+        # )
+        # wandb.log(
+        #     {f"{prefix}ee_pose_goal_error_orientation_norm STD": ee_pose_goal_error_orientation_norm.std()},
+        #     step=train_step,
+        # )

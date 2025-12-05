@@ -14,6 +14,7 @@ from mpd.parametric_trajectory.phase_time import PhaseTimeLinear, PhaseTimeSigmo
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
 from torch_robotics.trajectory.utils import finite_difference_vector, interpolate_points_v1
 from torch_robotics.visualizers.plot_utils import create_fig_and_axes
+from mpd.parametric_trajectory.trajectory_bspline import CompEnum
 
 from torch.func import vmap, jacrev, functional_call
 
@@ -171,9 +172,25 @@ class ParametricTrajectoryWaypoints(ParametricTrajectoryBase):
 
         self.n_control_points = n_control_points
         self.remove_outer_control_points = remove_outer_control_points
-        self.keep_last_control_points = keep_last_control_point
+        self.keep_last_control_point = keep_last_control_point
 
         self.use_interpolation_matrix = use_interpolation_matrix
+
+        ### used for comp diffuser
+        # when True, it means this is end segment
+        # self.keep_first_control_points = kwargs.get('keep_first_control_points', False)
+        # Legacy flag (None/True/False) mapped to CompEnum
+        legacy_remove = kwargs.get("remove_from_start_control_points", None)
+        comp_stage = kwargs.get("comp_stage", None)
+        if comp_stage is None:
+            if legacy_remove is None:
+                comp_stage = CompEnum.DEFAULT
+            elif legacy_remove is True:
+                comp_stage = CompEnum.START
+            elif legacy_remove is False:
+                comp_stage = CompEnum.END
+        self.comp_stage = comp_stage or CompEnum.DEFAULT
+        self.remove_from_start_control_points = legacy_remove
 
         self.interpolation_matrix = create_linear_interpolation_matrix(n_control_points, num_T_pts, **tensor_args)
 
@@ -188,9 +205,21 @@ class ParametricTrajectoryWaypoints(ParametricTrajectoryBase):
         # keep the last waypoint if we condition on the ee pose goal
         last_control_point = control_points[..., -1, :].clone()
         if self.remove_outer_control_points:
-            control_points = control_points[..., 1:-1, :]
-            if self.keep_last_control_points:
-                control_points = torch.cat((control_points, last_control_point[..., None, :]), dim=-2)
+            if self.comp_stage == CompEnum.DEFAULT: 
+                control_points = control_points[..., 1:-1, :]
+                if self.keep_last_control_point:
+                    control_points = torch.cat((control_points, last_control_point[..., None, :]), dim=-2)
+            
+            elif self.comp_stage == CompEnum.START: 
+                control_points = control_points[..., 1:, :]
+
+            elif self.comp_stage == CompEnum.END: 
+                control_points = control_points[..., :-1, :]
+                if self.keep_last_control_point:
+                    control_points = torch.cat((control_points, last_control_point[..., None, :]), dim=-2)
+            elif self.comp_stage == CompEnum.MID :
+                pass             
+            
         return control_points
 
     def augment_control_points_fn(self, control_points, q_pos_start, q_pos_goal):
@@ -209,17 +238,48 @@ class ParametricTrajectoryWaypoints(ParametricTrajectoryBase):
                 q_pos_goal = einops.repeat(q_pos_goal, "... -> n m 1 ...", n=repeat_shape[0], m=repeat_shape[1])
 
         last_inner_control_point = control_points[..., -1, :].clone()[..., None, :]
-        if self.keep_last_control_points:
+        if self.keep_last_control_point:
             control_points = control_points[..., :-1, :]
         control_points_augmented = control_points.clone()
+    
+        
         if self.remove_outer_control_points:
             # add control points in between the initial and goal states
-            if self.keep_last_control_points:
+            if self.comp_stage == CompEnum.DEFAULT : 
+                if self.keep_last_control_point:
+                    control_points_augmented = torch.cat(
+                        [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
+                    )
+                else:
+                    control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
+
+            elif self.comp_stage == CompEnum.START:
+                if self.keep_last_control_point : 
+                    control_points_augmented = torch.cat(
+                        [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
+                    )
+                else :
+                    control_points_augmented = torch.cat(
+                        [q_pos_start, control_points_augmented], dim=-2
+                    )
+            elif self.comp_stage == CompEnum.END:
+                if self.keep_last_control_point:
+                    control_points_augmented = torch.cat(
+                        [control_points_augmented, last_inner_control_point], dim=-2
+                    )
+                else:
+                    control_points_augmented = torch.cat([control_points_augmented, q_pos_goal], dim=-2)
+
+            elif self.comp_stage == CompEnum.MID : 
+                if self.keep_last_control_point:
+                    control_points_augmented = torch.cat(
+                        [control_points_augmented, last_inner_control_point], dim=-2
+                    )
+        else : 
+            # revert keep_last_control_point
+            if self.keep_last_control_point:
                 control_points_augmented = torch.cat(
-                    [q_pos_start, control_points_augmented, last_inner_control_point], dim=-2
-                )
-            else:
-                control_points_augmented = torch.cat([q_pos_start, control_points_augmented, q_pos_goal], dim=-2)
+                    [control_points_augmented, last_inner_control_point], dim=-2)
 
         return control_points_augmented
 

@@ -105,7 +105,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         self.reload_data = reload_data
         self.preload_data_to_device = preload_data_to_device
         self.load_data(n_task_samples=n_task_samples)
-
+        
         # possibly move the dataset to the gpu
         if self.preload_data_to_device:
             self.fields = dict_to_device(self.fields, **self.tensor_args)
@@ -129,6 +129,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
             self.field_key_context_qs,
             self.field_key_context_ee_goal_orientation,
             self.field_key_context_ee_goal_position,
+            *kwargs.get('extra_keys',[])
         ]
         self.normalize_ee_pose_goal = normalize_ee_pose_goal
         if normalize_ee_pose_goal:
@@ -321,6 +322,12 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
             print(f"Loading data took {t_load_data.elapsed:.2f} seconds.")
 
     def build_fields_data_sample(self, fields_d, q_start, q_goal, ee_pose_goal=None, device=None, **kwargs):
+
+        if self.field_key_control_points not in fields_d :
+            # when called from create_data_sample_normalized, there is no control_points_normalized 
+            created_control_points = torch.cat([q_start.unsqueeze(-2), q_goal.unsqueeze(-2)], dim = -2)
+            fields_d[self.field_key_control_points] = created_control_points
+
         fields_d[self.field_key_q_start] = q_start
         fields_d[self.field_key_q_goal] = q_goal
 
@@ -377,7 +384,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         # create a data sample
         data_sample = {}
         data_sample = self.build_fields_data_sample(data_sample, q_start_pos, q_goal_pos, ee_pose_goal=ee_pose_goal)
-
+        
         for k in list(data_sample.keys()):
             v = data_sample[k]
             # do not normalize the orientation, only the position part of the end-effector goal pose
@@ -390,11 +397,11 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
 
         if not self.preload_data_to_device:
             data_sample = dict_to_device(data_sample, **self.tensor_args)
-
+        # import pdb; pdb.set_trace()
         # build hard conditions
         hard_conds = self.get_hard_conditions(data_sample)
         data_sample["hard_conds"] = hard_conds
-
+        
         return data_sample
 
     def get_hard_conditions(self, data_d, **kwargs):
@@ -508,6 +515,8 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         # -------------------------------- Visualize ---------------------------------
         if task_id is None:
             task_id = np.random.choice(list(self.map_task_id_to_control_points_id.keys()))
+        
+        #import pdb; pdb.set_trace()
         idxs = np.asarray(self.map_task_id_to_control_points_id[task_id])
         control_points = self.fields[self.field_key_control_points][idxs]
         control_points = to_torch(control_points, **self.tensor_args)

@@ -16,7 +16,7 @@ from torch.func import vmap, jacrev, functional_call
 
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_numpy
 from torch_robotics.visualizers.plot_utils import create_fig_and_axes
-
+import copy 
 
 def project_hierarchical_gradients_fast(grads):
     """
@@ -206,6 +206,7 @@ class CostGuideManagerParametricTrajectory:
                         jacs_spatial_th,
                         link_poses_th_ee,
                         jacs_spatial_th_ee,
+                        **kwargs,
                     )
                 )
 
@@ -367,6 +368,12 @@ class CostSpace:
         self.robot = planning_task.robot
         self.env = planning_task.env
         self.tensor_args = tensor_args
+    
+    def update_parametric_trajectory(self, current_traj) : 
+        if current_traj is None : 
+            self.parametric_trajectory = self.planning_task.parametric_trajectory
+        else :
+            self.parametric_trajectory = current_traj
 
     def compute_cost_grad_wrt_cp(self, *args, **kwargs):
         raise NotImplementedError
@@ -644,7 +651,8 @@ class CostTaskSpaceCollisionObjects(CostTaskSpace):
         # C, dC/dx
         # cost (and gradient) of q trajectory in phase space
         # derivative of eq. 28 wrt control points -- https://arxiv.org/pdf/2412.19948
-        cost, grad_cost_wrt_x = self.collision_objects_field.compute_distance_field_cost_and_gradient(x_positions)
+        # add kwargs for timestep argument
+        cost, grad_cost_wrt_x = self.collision_objects_field.compute_distance_field_cost_and_gradient(x_positions, **kwargs)
 
         # (dx/dq)^T @ dC/dx (jacobian transpose x task space error)
         # map jacobian from world (spatial) to local world aligned using the adjoint

@@ -80,6 +80,17 @@ class DynPlanningTask(PlanningTask):
         self.is_dynamic = self._check_if_dynamic()
         print(f"DynPlanningTask : grad x {self.grad_scale}, margin x {self.margin_scale}")
 
+    def update_df_parametric_trajectory(
+        self, new_traj
+    ) : 
+        if self.df_collision_objects :
+            self.df_collision_objects.parametric_trajectory = new_traj
+
+
+        if self.df_collision_extra_objects : 
+            self.df_collision_extra_objects.parametric_trajectory = new_traj
+    
+
     def set_collision_fields(
         self,
         obstacle_cutoff_margin,
@@ -165,6 +176,7 @@ class DynPlanningTask(PlanningTask):
         #     #     use_field_collision_ws_boundaries
         #     # )
         #     raise NotImplementedError
+    
 
     def get_trajs_unvalid_and_valid(
         self, q_trajs, return_indices=False, num_interpolation=0, filter_joint_limits_vel_acc=False, **kwargs
@@ -173,7 +185,7 @@ class DynPlanningTask(PlanningTask):
         
         assert q_trajs.ndim == 3
         B, H, D = q_trajs.shape
-
+        #import pdb; pdb.set_trace()
         if kwargs.get('timesteps') == None : 
             if self.is_dynamic:
                 time_steps_tensor = self._get_timesteps_for_horizon(H)
@@ -232,6 +244,8 @@ class DynPlanningTask(PlanningTask):
         Returns:
             torch.Tensor: Timesteps, shape (horizon,)
         """
+        #import pdb
+        #pdb.set_trace()
         if hasattr(self.parametric_trajectory, 'get_timesteps'):
             timesteps = self.parametric_trajectory.get_timesteps()
             if horizon_size is not None and len(timesteps) != horizon_size:
@@ -357,6 +371,7 @@ class DynPlanningTask(PlanningTask):
         # Get time steps for the trajectory
         time_steps = None
         time_steps_tensor = None
+        #import pdb; pdb.set_trace()
         if self.is_dynamic:
             time_steps_full = self._get_timesteps_for_horizon(H)
             if time_steps_full is not None:
@@ -451,7 +466,7 @@ class DynPlanningTask(PlanningTask):
                 # Render trajectories with precomputed colors (avoid recomputing collisions!)
                 if traj_colors is not None:
                     render_kwargs = kwargs.copy()
-                    render_kwargs["colors"] = traj_colors
+                    render_kwargs["colors"] = traj_colors 
                     self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs, **render_kwargs)
 
             # Get precomputed collisions for current frame
@@ -539,7 +554,7 @@ class DynPlanningTask(PlanningTask):
 
         # Get middle time for static rendering
         # render_time = None
-        print(render_time)
+        # print(render_time)
         if self.is_dynamic:
             time_steps = self._get_timesteps_for_horizon(H)
             if render_time is None : 
