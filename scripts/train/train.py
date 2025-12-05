@@ -21,8 +21,8 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 os.environ["WANDB_API_KEY"] = "947955d5becc706e9ab246bec4867a259c529ec1"
 WANDB_MODE = "online"
-WANDB_ENTITY = "mpd-splines"
-DEBUG = True
+WANDB_ENTITY = "robotjoaa1"
+DEBUG = False
 
 
 @single_experiment_yaml
@@ -82,6 +82,10 @@ def experiment(
     steps_til_summary: int = 5000 if DEBUG else 20000,
     summary_class: str = "SummaryTrajectoryGeneration",
     steps_til_ckpt: int = 5000 if DEBUG else 20000,
+    # comp parameters
+    guide_mode = "default",
+    len_ovlap = 6,
+    drop_context = False,
     ########################################################################
     device: str = "cuda:0",
     debug: bool = DEBUG,
@@ -211,13 +215,13 @@ def experiment(
         )
 
         comp_configs = dict(
-            guide_mode = kwargs.get('guide_mode', "default"), 
-            len_ovlp_cd = kwargs.get('len_ovlap', 4),
+            guide_mode = guide_mode,
+            len_ovlp_cd = len_ovlap, 
             condition_guidance_w = 2.0, # fixed
             tr_inpat_prob = 0.5,
             tr_ovlp_prob = 0.5,
             tr_1side_drop_prob = 0.20,
-            drop_context = kwargs.get('drop_context', False),
+            drop_context = drop_context,
             train_st_only = False, 
         )
 
@@ -225,7 +229,7 @@ def experiment(
             model_class=generative_model_class,
             denoise_fn=Unet1D_TjTi_Stgl_Cond_V2(context_model = context_model, **unet_configs),
             horizon = full_dataset.n_learnable_control_points,
-            len_ovlp_cd = kwargs.get('len_ovlap', 4),
+            len_ovlp_cd = len_ovlap,
             comp_config=comp_configs,
             tensor_args=tensor_args,
             **diffusion_configs,
