@@ -99,12 +99,12 @@ def main():
 
             # Metadata / additional fields
             progress_ds = dst_h5.create_dataset("progress", shape=(num_trajs,), dtype=np.float32, compression="gzip")
-            delta_ds = dst_h5.create_dataset(
-                "delta_to_goal", shape=(num_trajs, *base_shape), dtype=scalar_dtype, compression="gzip"
-            )
-            start_idx_ds = dst_h5.create_dataset(
-                "segment_start_idx", shape=(num_trajs,), dtype=np.int32, compression="gzip"
-            )
+            # delta_ds = dst_h5.create_dataset(
+            #     "delta_to_goal", shape=(num_trajs, *base_shape), dtype=scalar_dtype, compression="gzip"
+            # )
+            # start_idx_ds = dst_h5.create_dataset(
+            #     "segment_start_idx", shape=(num_trajs,), dtype=np.int32, compression="gzip"
+            # )
             seg_len_ds = dst_h5.create_dataset("segment_len", shape=(num_trajs,), dtype=np.int32, compression="gzip")
             start_ds = dst_h5.create_dataset(
                 "start_state", shape=(num_trajs, *base_shape), dtype=scalar_dtype, compression="gzip"
@@ -112,11 +112,11 @@ def main():
             goal_ds = dst_h5.create_dataset(
                 "goal_state", shape=(num_trajs, *base_shape), dtype=scalar_dtype, compression="gzip"
             )
-            full_len_ds = dst_h5.create_dataset("full_traj_len", shape=(num_trajs,), dtype=np.int32, compression="gzip")
+            # full_len_ds = dst_h5.create_dataset("full_traj_len", shape=(num_trajs,), dtype=np.int32, compression="gzip")
             task_id_ds = dst_h5.create_dataset("task_id", shape=(num_trajs,), dtype=src_h5["task_id"].dtype, compression="gzip")
-            full_path_ds = dst_h5.create_dataset(
-                "sol_path_full", shape=(num_trajs, seq_len, *base_shape), dtype=scalar_dtype, compression="gzip"
-            )
+            # full_path_ds = dst_h5.create_dataset(
+            #     "sol_path_full", shape=(num_trajs, seq_len, *base_shape), dtype=scalar_dtype, compression="gzip"
+            # )
 
             # Prepare passthrough datasets that align with the new length.
             replicated_src = {}
@@ -144,14 +144,14 @@ def main():
                 padded[: segment.shape[0]] = segment
 
                 seg_ds[i] = padded
-                full_path_ds[i] = path.astype(scalar_dtype)
+                # full_path_ds[i] = path.astype(scalar_dtype)
                 progress_ds[i] = start_idx / path.shape[0]
-                delta_ds[i] = (path[-1] - segment[-1]).astype(scalar_dtype, copy=False)
-                start_idx_ds[i] = start_idx
-                seg_len_ds[i] = len(segment)
+                # delta_ds[i] = (path[-1] - segment[-1]).astype(scalar_dtype, copy=False)
+                # start_idx_ds[i] = start_idx
+                # seg_len_ds[i] = len(segment)
                 start_ds[i] = path[0].astype(scalar_dtype, copy=False)
                 goal_ds[i] = path[-1].astype(scalar_dtype, copy=False)
-                full_len_ds[i] = path.shape[0]
+                # full_len_ds[i] = path.shape[0]
                 task_id_ds[i] = src_h5["task_id"][base_idx]
 
                 for key, dst in replicated_dst.items():

@@ -3,5 +3,5 @@
 export LD_LIBRARY_PATH="$HOME/anaconda3/envs/mpd-splines-public/lib:$LD_LIBRARY_PATH"
 export CPATH=$HOME/anaconda3/envs/mpd-splines-public/include
 
-# unset LD_PRELOAD to use conda libstdc
-unset LD_PRELOAD
+# # unset LD_PRELOAD to use conda libstdc
+# unset LD_PRELOAD
