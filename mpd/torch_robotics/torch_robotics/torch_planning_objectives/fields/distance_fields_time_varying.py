@@ -41,7 +41,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
         self.parametric_trajectory = parametric_trajectory
 
     def object_signed_distances(self, link_pos, get_gradient=False, timesteps=None, **kwargs):
-        print("link pos : ",link_pos.shape) # batch, horizon, num_links, dim or (batch horizon), num_links, dim
+        # print("link pos : ",link_pos.shape) # batch, horizon, num_links, dim or (batch horizon), num_links, dim
 
         """
         Compute signed distances to time-varying objects.
@@ -69,7 +69,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             if self.parametric_trajectory is None:
                 raise ValueError("Either timesteps or parametric_trajectory must be provided")
             timesteps = self.parametric_trajectory.get_timesteps()  # Shape: (horizon,)
-        print(f'{timesteps.shape=}') # 238
+        # print(f'{timesteps.shape=}') 
 
         # Determine input shape
         original_shape = link_pos.shape
@@ -96,7 +96,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
             raise ValueError(f"Unexpected link_pos shape: {original_shape}")
         
         # Expand timesteps to match batch dimension
-        print(horizon) # 128
+        # print(horizon) 
         if timesteps.ndim == 1:
             # timesteps shape: (horizon,) -> (batch, horizon) -> (batch*horizon,)
             if len(timesteps) > horizon : 
@@ -120,7 +120,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
 
         # Expand timesteps to match link dimension
         # timesteps_for_links: (batch*horizon, num_links)
-        print("object signed distance",timesteps.shape, timesteps_flat.shape)
+        # print("object signed distance",timesteps.shape, timesteps_flat.shape)
         timesteps_for_links = timesteps_flat.unsqueeze(-1).expand(bh, num_links)
 
         # Reshape for query

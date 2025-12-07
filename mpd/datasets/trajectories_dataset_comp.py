@@ -296,17 +296,24 @@ class TrajectoryCompDatasetBspline(_TrajectoryCompBase, TrajectoryDatasetBspline
         )
         return fields_d
 
-    def build_context(self, data_sample):
-        context_d = {
-            self.field_key_progress: data_sample[self.field_key_progress], # already normalized
-            # f"{self.field_key_delta_to_goal}_normalized": data_sample[f"{self.field_key_delta_to_goal}_normalized"],
-            f"{self.field_key_full_start}_normalized": data_sample[f"{self.field_key_full_start}_normalized"],
-            f"{self.field_key_full_goal}_normalized": data_sample[f"{self.field_key_full_goal}_normalized"],
-            f"{self.field_key_full_ee_goal_position}_normalized": data_sample[f"{self.field_key_full_ee_goal_position}_normalized"],
-            f"{self.field_key_full_ee_goal_orientation}_normalized": data_sample[f"{self.field_key_full_ee_goal_orientation}_normalized"],
-            # ## for evaluation computing 
-            # f"{self.field_key_delta_to_goal}_normalizer" : self.normalizers[self.field_key_delta_to_goal]
-        }
+    def build_context(self, data_sample, is_train=True):
+        if is_train : 
+            context_d = {
+                self.field_key_progress: data_sample[self.field_key_progress], # already normalized
+                # f"{self.field_key_delta_to_goal}_normalized": data_sample[f"{self.field_key_delta_to_goal}_normalized"],
+                f"{self.field_key_full_start}_normalized": data_sample[f"{self.field_key_full_start}_normalized"],
+                f"{self.field_key_full_goal}_normalized": data_sample[f"{self.field_key_full_goal}_normalized"],
+                f"{self.field_key_full_ee_goal_position}_normalized": data_sample[f"{self.field_key_full_ee_goal_position}_normalized"],
+                f"{self.field_key_full_ee_goal_orientation}_normalized": data_sample[f"{self.field_key_full_ee_goal_orientation}_normalized"]
+            }
+        else : 
+            context_d = {
+                # f"{self.field_key_delta_to_goal}_normalized": data_sample[f"{self.field_key_delta_to_goal}_normalized"],
+                f"{self.field_key_full_start}_normalized": data_sample[f"{self.field_key_q_start}_normalized"],
+                f"{self.field_key_full_goal}_normalized": data_sample[f"{self.field_key_q_goal}_normalized"],
+                f"{self.field_key_full_ee_goal_position}_normalized": data_sample[f"{self.field_key_context_ee_goal_position}_normalized"],
+                f"{self.field_key_full_ee_goal_orientation}_normalized": data_sample[f"{self.field_key_context_ee_goal_orientation}_normalized"]
+            }
         return context_d
 
 class TrajectoryCompDatasetWaypoint(_TrajectoryCompBase, TrajectoryDatasetWaypoints):
@@ -484,13 +491,22 @@ class TrajectoryCompDatasetWaypoint(_TrajectoryCompBase, TrajectoryDatasetWaypoi
         )
         return fields_d
 
-    def build_context(self, data_sample):
-        context_d = {
-            self.field_key_progress: data_sample[self.field_key_progress], # already normalized
-            # f"{self.field_key_delta_to_goal}_normalized": data_sample[f"{self.field_key_delta_to_goal}_normalized"],
-            f"{self.field_key_full_start}_normalized": data_sample[f"{self.field_key_full_start}_normalized"],
-            f"{self.field_key_full_goal}_normalized": data_sample[f"{self.field_key_full_goal}_normalized"],
-            f"{self.field_key_full_ee_goal_position}_normalized": data_sample[f"{self.field_key_full_ee_goal_position}_normalized"],
-            f"{self.field_key_full_ee_goal_orientation}_normalized": data_sample[f"{self.field_key_full_ee_goal_orientation}_normalized"]
-        }
+    def build_context(self, data_sample, is_train=True):
+        if is_train : 
+            context_d = {
+                self.field_key_progress: data_sample[self.field_key_progress], # already normalized
+                # f"{self.field_key_delta_to_goal}_normalized": data_sample[f"{self.field_key_delta_to_goal}_normalized"],
+                f"{self.field_key_full_start}_normalized": data_sample[f"{self.field_key_full_start}_normalized"],
+                f"{self.field_key_full_goal}_normalized": data_sample[f"{self.field_key_full_goal}_normalized"],
+                f"{self.field_key_full_ee_goal_position}_normalized": data_sample[f"{self.field_key_full_ee_goal_position}_normalized"],
+                f"{self.field_key_full_ee_goal_orientation}_normalized": data_sample[f"{self.field_key_full_ee_goal_orientation}_normalized"]
+            }
+        else : 
+            context_d = {
+                # f"{self.field_key_delta_to_goal}_normalized": data_sample[f"{self.field_key_delta_to_goal}_normalized"],
+                f"{self.field_key_full_start}_normalized": data_sample[f"{self.field_key_q_start}_normalized"],
+                f"{self.field_key_full_goal}_normalized": data_sample[f"{self.field_key_q_goal}_normalized"],
+                f"{self.field_key_full_ee_goal_position}_normalized": data_sample[f"{self.field_key_context_ee_goal_position}_normalized"],
+                f"{self.field_key_full_ee_goal_orientation}_normalized": data_sample[f"{self.field_key_context_ee_goal_orientation}_normalized"]
+            }
         return context_d

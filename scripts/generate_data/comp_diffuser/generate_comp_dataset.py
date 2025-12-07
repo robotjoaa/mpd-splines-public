@@ -58,6 +58,11 @@ def main():
         default=None,
         help="Output path for the augmented dataset. Defaults to <input>_comp_segments.hdf5.",
     )
+    parser.add_argument(
+        "--keep-extra",
+        action="store_true",
+        help="If set, copy all additional datasets from the source file. Otherwise keep only fields needed for comp training.",
+    )
     parser.add_argument("--min-frac", type=float, default=0.3, help="Minimum segment fraction (0,1].")
     parser.add_argument("--max-frac", type=float, default=0.6, help="Maximum segment fraction (0,1].")
     parser.add_argument(
@@ -92,47 +97,48 @@ def main():
         max_seg_len = int(math.ceil(seq_len * args.max_frac))
 
         with h5py.File(output_path, "w") as dst_h5:
-            # Segment datasets
+            # Core datasets: segments, progress, full start/goal only
             seg_ds = dst_h5.create_dataset(
                 "sol_path", shape=(num_trajs, max_seg_len, *base_shape), dtype=scalar_dtype, compression="gzip"
             )
-
-            # Metadata / additional fields
             progress_ds = dst_h5.create_dataset("progress", shape=(num_trajs,), dtype=np.float32, compression="gzip")
-            delta_ds = dst_h5.create_dataset(
-                "delta_to_goal", shape=(num_trajs, *base_shape), dtype=scalar_dtype, compression="gzip"
-            )
-            start_idx_ds = dst_h5.create_dataset(
-                "segment_start_idx", shape=(num_trajs,), dtype=np.int32, compression="gzip"
-            )
-            seg_len_ds = dst_h5.create_dataset("segment_len", shape=(num_trajs,), dtype=np.int32, compression="gzip")
             start_ds = dst_h5.create_dataset(
                 "start_state", shape=(num_trajs, *base_shape), dtype=scalar_dtype, compression="gzip"
             )
             goal_ds = dst_h5.create_dataset(
                 "goal_state", shape=(num_trajs, *base_shape), dtype=scalar_dtype, compression="gzip"
             )
-            full_len_ds = dst_h5.create_dataset("full_traj_len", shape=(num_trajs,), dtype=np.int32, compression="gzip")
-            task_id_ds = dst_h5.create_dataset("task_id", shape=(num_trajs,), dtype=src_h5["task_id"].dtype, compression="gzip")
-            full_path_ds = dst_h5.create_dataset(
-                "sol_path_full", shape=(num_trajs, seq_len, *base_shape), dtype=scalar_dtype, compression="gzip"
-            )
 
-            # Prepare passthrough datasets that align with the new length.
             replicated_src = {}
             replicated_dst = {}
-            for key, ds in src_h5.items():
-                if key in {"sol_path", "task_id"}:
-                    continue
-                if key in dst_h5:
-                    continue
-                if ds.shape and ds.shape[0] == num_trajs_original:
-                    replicated_src[key] = ds
-                    replicated_dst[key] = dst_h5.create_dataset(
-                        key, shape=(num_trajs, *ds.shape[1:]), dtype=ds.dtype, compression="gzip"
-                    )
-                else:
-                    dst_h5.create_dataset(key, data=ds[:], dtype=ds.dtype, compression="gzip")
+            # Extra datasets only when keep_extra is set
+            if args.keep_extra:
+                delta_ds = dst_h5.create_dataset(
+                    "delta_to_goal", shape=(num_trajs, *base_shape), dtype=scalar_dtype, compression="gzip"
+                )
+                start_idx_ds = dst_h5.create_dataset(
+                    "segment_start_idx", shape=(num_trajs,), dtype=np.int32, compression="gzip"
+                )
+                seg_len_ds = dst_h5.create_dataset("segment_len", shape=(num_trajs,), dtype=np.int32, compression="gzip")
+                full_len_ds = dst_h5.create_dataset("full_traj_len", shape=(num_trajs,), dtype=np.int32, compression="gzip")
+                task_id_ds = dst_h5.create_dataset("task_id", shape=(num_trajs,), dtype=src_h5["task_id"].dtype, compression="gzip")
+                full_path_ds = dst_h5.create_dataset(
+                    "sol_path_full", shape=(num_trajs, seq_len, *base_shape), dtype=scalar_dtype, compression="gzip"
+                )
+
+                # Copy passthrough datasets and replicate those with a leading batch dim.
+                for key, ds in src_h5.items():
+                    if key in {"sol_path", "task_id"}:
+                        continue
+                    if key in dst_h5:
+                        continue
+                    if ds.shape and ds.shape[0] == num_trajs_original:
+                        replicated_src[key] = ds
+                        replicated_dst[key] = dst_h5.create_dataset(
+                            key, shape=(num_trajs, *ds.shape[1:]), dtype=ds.dtype, compression="gzip"
+                        )
+                    else:
+                        dst_h5.create_dataset(key, data=ds[:], dtype=ds.dtype, compression="gzip")
 
             for i in tqdm(range(num_trajs), desc="Sampling segments"):
                 base_idx = int(rng.integers(0, num_trajs_original))
@@ -144,18 +150,20 @@ def main():
                 padded[: segment.shape[0]] = segment
 
                 seg_ds[i] = padded
-                full_path_ds[i] = path.astype(scalar_dtype)
-                progress_ds[i] = start_idx / path.shape[0]
-                delta_ds[i] = (path[-1] - segment[-1]).astype(scalar_dtype, copy=False)
-                start_idx_ds[i] = start_idx
-                seg_len_ds[i] = len(segment)
                 start_ds[i] = path[0].astype(scalar_dtype, copy=False)
                 goal_ds[i] = path[-1].astype(scalar_dtype, copy=False)
-                full_len_ds[i] = path.shape[0]
-                task_id_ds[i] = src_h5["task_id"][base_idx]
+                progress_ds[i] = start_idx / path.shape[0]
 
-                for key, dst in replicated_dst.items():
-                    dst[i] = replicated_src[key][base_idx]
+                if args.keep_extra:
+                    full_path_ds[i] = path.astype(scalar_dtype)
+                    delta_ds[i] = (path[-1] - segment[-1]).astype(scalar_dtype, copy=False)
+                    start_idx_ds[i] = start_idx
+                    seg_len_ds[i] = len(segment)
+                    full_len_ds[i] = path.shape[0]
+                    task_id_ds[i] = src_h5["task_id"][base_idx]
+
+                    for key, dst in replicated_dst.items():
+                        dst[i] = replicated_src[key][base_idx]
 
     print(f"Saved composed dataset with {num_trajs} segments to {output_path}")
 

@@ -436,7 +436,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
 
         return hard_conds
 
-    def build_context(self, data_sample):
+    def build_context(self, data_sample, **kwargs):
         context_d = {}
         if self.context_qs and self.context_ee_goal_pose:
             context_d = {

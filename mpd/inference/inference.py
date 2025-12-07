@@ -10,7 +10,10 @@ from scipy.spatial.transform import Rotation
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF
 
-from mpd.models import GaussianDiffusionModel, guide_gradient_steps, CVAEModel, CompDiffusionModel
+from mpd.models import (
+    GaussianDiffusionModel, guide_gradient_steps, CVAEModel, CompDiffusionModel,
+    CompDiffusionModelv2
+)
 from mpd.utils.loaders import load_params_from_yaml
 from pb_ompl.pb_ompl import add_box, fit_bspline_to_path
 from scripts.generate_data.generate_trajectories import GenerateDataOMPL
@@ -328,17 +331,75 @@ def render_results(
                 anim_time=args_inference.trajectory_duration,
                 filter_joint_limits_vel_acc=True,
             ) 
-            # planning_task.animate_robot_trajectories(
-            #     q_pos_trajs=results_single_plan.trajs_list_topn,
-            #     q_pos_start=q_pos_start,
-            #     q_pos_goal=q_pos_goal,
-            #     plot_x_trajs=True,
-            #     video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-{idx:03d}.mp4"),
-            #     #n_frames=max((2, results_single_plan.q_trajs_pos_iters[-1].shape[1] // 10)),
-            #     n_frames=args_inference.num_T_pts, #full frames
-            #     anim_time=args_inference.trajectory_duration,
-            #     filter_joint_limits_vel_acc=True,
-            # ) 
+
+            tmp = results_single_plan.trajs_list
+            #import pdb; pdb.set_trace()
+            ### plot n_comp videos for each segment to get collision info 
+            # if 'n_comp' in results_single_plan and 'trajs_info' in results_single_plan : 
+
+            #     n_comp = results_single_plan.n_comp 
+            #     trajs_info = results_single_plan.trajs_info
+            #     ovlp_t_pts = trajs_info['overlap_T_pts']
+            #     if tmp.ndim == 4 : 
+            #         n_comp, batch, tmp_horizon, _ = tmp.shape
+            #     elif tmp.ndim == 3 :
+            #         n_batch, tmp_horizon, _ = tmp.shape 
+            #         batch = n_batch // n_comp
+            #     else : 
+            #         assert False
+
+            #     tmp_horizon = tmp.shape[-2]
+            #     print(f"render comp results: {tmp_horizon=} {ovlp_t_pts=}")
+            #     for n_c in range(n_comp) : 
+            #         if n_c == 0: 
+            #             tmp_key = 'start'
+            #         elif n_c == n_comp-1:
+            #             tmp_key = 'end'
+            #         else :
+            #             tmp_key = 'mid'
+                    
+            #         local_traj = trajs_info['local'][tmp_key]
+            #         planning_task.update_df_parametric_trajectory(local_traj)
+            #         st_off = (tmp_horizon - ovlp_t_pts) * n_c 
+            #         end_off = st_off + tmp_horizon - 1
+            #         time_step_range = (st_off, end_off)
+            #         if tmp.ndim == 3 :
+            #             plot_tmp = tmp[batch*n_c: batch*(n_c+1), :, :]
+            #         elif tmp.ndim ==4 :
+            #             plot_tmp = tmp[n_c]
+
+            #         planning_task.animate_robot_trajectories(
+            #             q_pos_trajs=plot_tmp,
+            #             q_pos_start=q_pos_start,
+            #             q_pos_goal=q_pos_goal,
+            #             plot_x_trajs=True,
+            #             video_filepath=os.path.join(results_dir, f"{base_file_name}-comp-robot-env-{idx:03d}-{n_c}_{n_comp}.mp4"),
+            #             n_frames=tmp.shape[-2],
+            #             anim_time=args_inference.trajectory_duration,
+            #             filter_joint_limits_vel_acc=True,
+            #             time_step_range=time_step_range
+            #         )
+            #     ## reset to global after plotting
+            #     planning_task.update_df_parametric_trajectory(planning_task.parametric_trajectory)
+
+            if 'n_comp' in results_single_plan and 'trajs_info' in results_single_plan : 
+                n_comp = results_single_plan.n_comp 
+                trajs_info = results_single_plan.trajs_info
+                ovlp_t_pts = trajs_info['overlap_T_pts']
+                planning_task.animate_robot_trajectories_comp(
+                    q_pos_trajs=tmp,
+                    n_comp= n_comp,
+                    overlap_T_pts=ovlp_t_pts,
+                    q_pos_start=q_pos_start,
+                    q_pos_goal=q_pos_goal,
+                    plot_x_trajs=True,
+                    video_filepath=os.path.join(results_dir, f"{base_file_name}-robot-env-{idx:03d}-comp.mp4"),
+                    #n_frames=max((2, results_single_plan.q_trajs_pos_iters[-1].shape[1] // 10)),
+                    n_frames=tmp.shape[-2],
+                    anim_time=args_inference.trajectory_duration,
+                    filter_joint_limits_vel_acc=True,
+                ) 
+
         else : 
             planning_task.animate_robot_trajectories(
                 q_pos_trajs=results_single_plan.q_trajs_pos_iters[-1],
@@ -400,8 +461,13 @@ class GenerativeOptimizationPlanner:
         #     args_inference.model_dir, 'checkpoints',
         #     f'{"ema_" if args_train["use_ema"] else ""}model_current.pth'
         # )
+
+        # model_path = os.path.join(
+        #     args_inference.model_dir, "checkpoints", f'{"ema_" if args_train["use_ema"] else ""}model_current.pth'
+        # )
+        
         model_path = os.path.join(
-            args_inference.model_dir, "checkpoints", f'{"ema_" if args_train["use_ema"] else ""}model_current.pth'
+            args_inference.model_dir, "checkpoints", f'{"ema_" if args_train["use_ema"] else ""}model__iter_1500000.pth'
         )
         self.model = torch.load(model_path, map_location=tensor_args["device"])
         self.model.eval()
@@ -449,21 +515,41 @@ class GenerativeOptimizationPlanner:
             comp_args = args_inference["comp"]
             print("comp" in args_inference)
             is_spline = args_inference.model_selection == "bspline"
-            diffusion_sampling_args.update(
-                method=args_inference.diffusion_sampling_method,
-                t_start_guide=t_start_guide,
-                n_diffusion_steps_without_noise=args_inference.n_diffusion_steps_without_noise,
-                compute_costs_with_xrecon=args_inference.compute_costs_with_xrecon,
-                n_comp = comp_args.n_comp,
-                len_ovlp_cd = comp_args.len_ovlp_cd,
-                is_spline = is_spline,
-                guide_mode = comp_args.guide_mode,
-                do_cond = comp_args.do_cond,
-                blend_type = comp_args.blend_type,
-                blend_beta = comp_args.blend_beta
-            )
-            print(f"{comp_args.n_comp=}, {comp_args.len_ovlp_cd=}, {is_spline=} ")
+            if isinstance(self.model, CompDiffusionModelv2) : 
 
+                diffusion_sampling_args.update(
+                    method=args_inference.diffusion_sampling_method,
+                    t_start_guide=t_start_guide,
+                    n_diffusion_steps_without_noise=args_inference.n_diffusion_steps_without_noise,
+                    compute_costs_with_xrecon=args_inference.compute_costs_with_xrecon,
+                    n_comp = comp_args.n_comp,
+                    len_ovlp_cd = comp_args.len_ovlp_cd,
+                    is_spline = is_spline,
+                    guide_mode = comp_args.guide_mode,
+                    do_cond = comp_args.do_cond,
+                    blend_type = comp_args.blend_type,
+                    blend_beta = comp_args.blend_beta,
+                    condition_guidance_g = comp_args.condition_guidance_g,
+                    condition_guidance_l = comp_args.condition_guidance_l,
+                )
+                print(f"{comp_args.n_comp=}, {comp_args.len_ovlp_cd=}, {is_spline=} ")
+                print(f"{comp_args.guide_mode=}, {comp_args.condition_guidance_l=}, {comp_args.condition_guidance_g=}")
+                
+            else : 
+                diffusion_sampling_args.update(
+                    method=args_inference.diffusion_sampling_method,
+                    t_start_guide=t_start_guide,
+                    n_diffusion_steps_without_noise=args_inference.n_diffusion_steps_without_noise,
+                    compute_costs_with_xrecon=args_inference.compute_costs_with_xrecon,
+                    n_comp = comp_args.n_comp,
+                    len_ovlp_cd = comp_args.len_ovlp_cd,
+                    is_spline = is_spline,
+                    guide_mode = comp_args.guide_mode,
+                    do_cond = comp_args.do_cond,
+                    blend_type = comp_args.blend_type,
+                    blend_beta = comp_args.blend_beta
+                )
+                print(f"{comp_args.n_comp=}, {comp_args.len_ovlp_cd=}, {is_spline=} ")
             self.sample_fn_kwargs = diffusion_sampling_args
         elif isinstance(self.model, CVAEModel):
             pass
@@ -575,7 +661,7 @@ class GenerativeOptimizationPlanner:
         )
         input_data_one_sample = dict_to_device(input_data_one_sample, self.tensor_args["device"])
         hard_conds = input_data_one_sample["hard_conds"]
-        context_d = self.dataset.build_context(input_data_one_sample)
+        context_d = self.dataset.build_context(input_data_one_sample, is_train = False)
 
         with TimerCUDA() as t_inference_total:
             control_points_recon_normalized_iters = None
@@ -684,9 +770,12 @@ class GenerativeOptimizationPlanner:
                     if 'trajs_list_topn' in results_ns : 
                         tmp_trajs = results_ns.trajs_list_topn['pos']
                         
-                        trajs_list_norm = self.dataset.unnormalize_control_points(tmp_trajs) 
+                        trajs_list_norm = self.dataset.unnormalize_control_points(tmp_trajs)  
+                        assert 'n_comp' in self.sample_fn_kwargs 
+
                         results_ns.update(
-                            trajs_list = trajs_list_norm
+                            trajs_list = trajs_list_norm,
+                            n_comp = self.sample_fn_kwargs['n_comp']
                         ) 
                 else : 
                     raise NotImplementedError

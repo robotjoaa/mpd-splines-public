@@ -210,24 +210,31 @@ class CompDiffusionModelv2(CompDiffusionModel):
         # compute std_dev_t
         sigma = ddim_eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
         c = (1 - alpha_next - sigma**2).sqrt()
+        
+        assert 'context_d' in tj_cond and 'progress' in tj_cond['context_d']
 
         # denoising noise
         with TimerCUDA() as t_generator:
-
+            
             if tj_cond['do_cond']: # cfg
-                x_3, t_2d_3, tj_cond_3 = batch_repeat_tensor_in_dict(x, t, tj_cond, n_rp=3)
+                x_3, t_2d_3, tj_cond_3 = batch_repeat_tensor_in_dict(x, t, tj_cond, n_rp=3, repeat_context=False)
                 if cfg_zero_end_ovlp:
                     tj_cond_3['force_zero_end_ovlp'] = True
                 assert (t_2d_3[0] == t_2d_3[0,0]).all(), 'sanity check'
                 t_1d_3 = t_2d_3[:, 0]
-            
-                out = self.model(x_3, t_1d_3, tj_cond_3, only_uncond=True )
-                out_local = out[:len(x), :, :]
-                out_global = out[len(x):-len(x),:,:]
-                out_uncd = out[-len(x):, :, :]
+                out = self.model(x_3, t_1d_3, tj_cond_3, only_uncond=False)
+                # first 1/3 is global
+                # second 1/3 is uncond
+                # last 1/3 is local
+
+                out_global = out[:len(x), :, :]
+                out_uncd = out[len(x):-len(x), :, :]
+                out_local = out[-len(x):, :, :]
+                
                 model_out = out_uncd \
                     + self.condition_guidance_g * (out_global - out_uncd) \
                     + self.condition_guidance_l * (out_local - out_uncd)
+                
                 
             else : # do_cond is false, local is all drop 
                 model_out = self.small_model_pred(x, t, tj_cond)
@@ -266,6 +273,9 @@ class CompDiffusionModelv2(CompDiffusionModel):
 
         # Modify the noise if guidance is active
         # https://arxiv.org/pdf/2105.05233.pdf - Algorithm 2
+        if self.guide_mode == "cfg" :
+            guide = None
+
         if guide is not None and (sampling_timesteps - current_step <= t_start_guide) : 
             with TimerCUDA() as t_guide:
                 x_start = x.clone()
@@ -331,6 +341,8 @@ class CompDiffusionModelv2(CompDiffusionModel):
         return_chain=False,
         return_chain_x_recon=False,
         is_train=True,
+        condition_guidance_g=None,
+        condition_guidance_l=None,
         **diffusion_kwargs,
     ):
         # repeat hard conditions and contexts for n_samples
@@ -379,10 +391,10 @@ class CompDiffusionModelv2(CompDiffusionModel):
             print(f"hard_conds : {g_cond['st_gl']}")
 
             trajs_info = None 
-            if self.is_spline :
-                tmp_guide = diffusion_kwargs.get('guide', None) 
-                if tmp_guide is not None and isinstance(tmp_guide, CostGuideManagerCompTrajectory) : 
-                    trajs_info = tmp_guide.get_all_parametric_trajectory()
+            # if self.is_spline :
+            tmp_guide = diffusion_kwargs.get('guide', None) 
+            if tmp_guide is not None and isinstance(tmp_guide, CostGuideManagerCompTrajectory) : 
+                trajs_info = tmp_guide.get_all_parametric_trajectory()
 
             self.tj_blder = Traj_Blender(
                 self.horizon,
@@ -392,7 +404,15 @@ class CompDiffusionModelv2(CompDiffusionModel):
                 exp_beta = self.blend_beta,
                 trajs_info = trajs_info,
             )
+        
+            if condition_guidance_g is not None and isinstance(condition_guidance_g, float):
+                self.condition_guidance_g = condition_guidance_g
 
+            if condition_guidance_l is not None and isinstance(condition_guidance_l, float) : 
+                self.condition_guidance_l = condition_guidance_l
+            # pdb.set_trace()
+            print_color(f"run_inference : {self.condition_guidance_g=}, {self.condition_guidance_l=}")
+            
             sample = self.gen_cond_stgl(g_cond, 
                                         context_d, 
                                         batch_size=n_samples,
@@ -449,7 +469,9 @@ class CompDiffusionModelv2(CompDiffusionModel):
 
         # get concatenation of three outputs
 
-        x_noisy_3, t_2d_3, tj_cond_3 = batch_repeat_tensor_in_dict(x_noisy, t_2d, tj_cond, n_rp=3)
+        x_noisy_3, t_2d_3, tj_cond_3 = batch_repeat_tensor_in_dict(
+            x_noisy, t_2d, tj_cond, n_rp=3, repeat_context=False
+        )
 
         assert (t_2d_3[0] == t_2d_3[0,0]).all(), 'sanity check'
         
@@ -652,7 +674,8 @@ class CompDiffusionModelv2(CompDiffusionModel):
                             t_type: str,
                             is_noisy: bool,
                             context_d:dict,
-                            hard_conds:dict):
+                            hard_conds:dict,
+                            progress: Optional[Union[float, torch.Tensor]] = None):
         """
         t_1d: (B,)
         if st_traj is not None, then do st traj inpainting;
@@ -772,6 +795,27 @@ class CompDiffusionModelv2(CompDiffusionModel):
             end_traj = end_traj.clone()
 
         # pdb.set_trace()
+
+        # ensure progress matches batch size for context model (used in ContextModelGlobal)
+        context_d = dict(context_d)
+        progress_tensor = progress if progress is not None else context_d.get('progress', None)
+        if progress_tensor is None:
+            progress_tensor = torch.zeros(batch_size, device=device, dtype=x_et.dtype)
+        else:
+            if not torch.is_tensor(progress_tensor):
+                progress_tensor = torch.tensor(progress_tensor, device=device, dtype=x_et.dtype)
+            else:
+                progress_tensor = progress_tensor.to(device=device, dtype=x_et.dtype)
+            if progress_tensor.ndim == 0:
+                progress_tensor = progress_tensor.expand(batch_size)
+            elif progress_tensor.shape[0] == 1 and batch_size > 1:
+                progress_tensor = progress_tensor.expand(batch_size, *progress_tensor.shape[1:])
+            else:
+                assert progress_tensor.shape[0] == batch_size, "progress must align with batch size"
+            assert progress_tensor.numel() == batch_size, "progress must provide one value per batch element"
+            # flatten any trailing singleton dims to 1D for the sinusoidal encoder
+            progress_tensor = progress_tensor.reshape(batch_size)
+        context_d['progress'] = progress_tensor
 
         ## TODO: Add guide time range to tj_cond
         tj_cond = {
@@ -918,6 +962,7 @@ class CompDiffusionModelv2(CompDiffusionModel):
             
             results_ns.update(
                 trajs_list_topn =  trajs_list_topn_q_trajs,
+                trajs_info = self.tj_blder.trajs_info
                 # trajs_list_topn_bl = trajs_list_topn_bl,
                 # trajs_list = trajs_list 
             )
@@ -1005,14 +1050,13 @@ class CompDiffusionModelv2(CompDiffusionModel):
                         t_type='0', 
                         is_noisy=True,
                         context_d=context_d,
-                        hard_conds=hard_conds
+                        hard_conds=hard_conds,
+                        progress=i_tj/n_comp,
                         # i_tj, n_comp
                         )
                     
                     tj_cond_p_i['do_cond'] = do_cond # True 
                     tj_cond_p_i['idx'] = i_tj
-                    # update progress during evaluation
-                    tj_cond_p_i['context_d']['progress'] = i_tj/n_comp
                     # if self.use_ddim:
                     
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
@@ -1047,13 +1091,12 @@ class CompDiffusionModelv2(CompDiffusionModel):
                         is_noisy=True,
                         context_d=context_d,
                         hard_conds={},
+                        progress=i_tj/n_comp,
                         # i_tj, n_comp
                     )
                     
                     tj_cond_p_i['do_cond'] = do_cond # True
                     tj_cond_p_i['idx'] = i_tj
-                    # update progress during evaluation
-                    tj_cond_p_i['context_d']['progress'] = i_tj/n_comp
                     # if self.use_ddim:
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
                                 sampling_timesteps=sampling_timesteps,
@@ -1083,14 +1126,13 @@ class CompDiffusionModelv2(CompDiffusionModel):
                         t_type='0',
                         is_noisy=True,
                         context_d=context_d,
-                        hard_conds=hard_conds
+                        hard_conds=hard_conds,
+                        progress=i_tj/n_comp,
                         # i_tj, n_comp
                         )
                     
                     tj_cond_p_i['do_cond'] = do_cond # True
                     tj_cond_p_i['idx'] = i_tj
-                    # update progress during evaluation
-                    tj_cond_p_i['context_d']['progress'] = i_tj/n_comp
                     # if self.use_ddim:
                     x_p_i = self.ddim_sample(x_p_i, tj_cond_p_i, t, t_next, 
                                 sampling_timesteps=sampling_timesteps,

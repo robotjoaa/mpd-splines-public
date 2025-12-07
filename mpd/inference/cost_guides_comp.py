@@ -65,14 +65,14 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         )
 
         # Overlap portion expressed in the same units as control points and time steps.
-        ovlp_frac = self.len_ovlp_cd / float(self.n_control_points_local)
-        self.overlap_time = self.traj_duration_local * ovlp_frac
-        self.overlap_T_pts = max(1, int(round(self.num_T_pts_local * ovlp_frac)))
-        print(f'{ovlp_frac=}, {self.overlap_time=}, {self.overlap_T_pts=}')
+        # ovlp_frac = self.len_ovlp_cd / float(self.n_control_points_local)
+        # self.overlap_time = self.traj_duration_local * ovlp_frac
+        # self.overlap_T_pts = max(1, int(round(self.num_T_pts_local * ovlp_frac)))
+        
 
         # Build the merged/global trajectory used for rendering / merged rollouts.
         self._parametric_trajectory_global = self._set_merged_trajectory()
-       
+        print(f'{self.ovlp_frac=}, {self.overlap_time=}, {self.overlap_T_pts=}')
         assert hasattr(self, 'traj_kwargs') # must be set in set_merged_trajectory 
 
         # self.planning_task.merged_trajectory = self._parametric_trajectory_global
@@ -190,6 +190,10 @@ class CostGuideManagerCompTrajectory(CostGuideManagerParametricTrajectory):
         ovlp_frac = self.len_ovlp_cd / float(n_cp_local)
         overlap_time = self.traj_duration_local * ovlp_frac
         overlap_T_pts = max(1, int(round(self.num_T_pts_local * ovlp_frac)))
+
+        self.ovlp_frac = ovlp_frac
+        self.overlap_time = overlap_time
+        self.overlap_T_pts = overlap_T_pts
 
         n_cp_global = max(1, int(self.n_comp * n_cp_local - (self.n_comp - 1) * self.len_ovlp_cd))
         num_T_pts_global = max(1, int(self.n_comp * self.num_T_pts_local - (self.n_comp - 1) * overlap_T_pts))

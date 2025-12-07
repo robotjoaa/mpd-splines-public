@@ -16,6 +16,7 @@ import einops
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
+import matplotlib.colors as mcolors
 
 from mpd.parametric_trajectory.trajectory_base import ParametricTrajectoryBase
 from mpd.plotting.utils import remove_axes_labels_ticks
@@ -234,7 +235,7 @@ class DynPlanningTask(PlanningTask):
         # Default: assume static
         return False
 
-    def _get_timesteps_for_horizon(self, horizon_size=None):
+    def _get_timesteps_for_horizon(self, horizon_size=None, time_step_range=None):
         """
         Get timesteps corresponding to trajectory horizon.
 
@@ -250,8 +251,12 @@ class DynPlanningTask(PlanningTask):
             timesteps = self.parametric_trajectory.get_timesteps()
             if horizon_size is not None and len(timesteps) != horizon_size:
                 # Interpolate to match horizon
-                t_start = timesteps[0]
-                t_end = timesteps[-1]
+                if time_step_range is None : 
+                    t_start = timesteps[0]
+                    t_end = timesteps[-1]
+                else : 
+                    t_start = timesteps[time_step_range[0]]
+                    t_end = timesteps[time_step_range[1]]
                 timesteps = torch.linspace(t_start, t_end, horizon_size, **self.tensor_args)
             return timesteps
         else:
@@ -339,6 +344,7 @@ class DynPlanningTask(PlanningTask):
         n_frames=100,
         remove_title=False,
         process_axes=lambda x: x,
+        time_step_range=None,
         **kwargs,
     ):
         """
@@ -362,18 +368,30 @@ class DynPlanningTask(PlanningTask):
         if q_pos_trajs is None:
             return
 
-        assert q_pos_trajs.ndim == 3
-        B, H, D = q_pos_trajs.shape
 
+        if q_pos_trajs.ndim == 4 : 
+            n_comp, B, H, D = q_pos_trajs.shape
+            q_pos_trajs = einops.rearrange(q_pos_trajs, 'n b ... -> (n b) ...')
+            print(q_pos_trajs.shape)
+        elif q_pos_trajs.ndim == 3 : 
+            B, H, D = q_pos_trajs.shape
+            n_comp =1
+
+        assert q_pos_trajs.ndim == 3 
+        # import pdb; pdb.set_trace()
+        # if time_step_offset is not None :
+        #     st_off = time_step_offset
+        #     end_off = time_step_offset + H -1 
+            
         idxs = np.round(np.linspace(0, H - 1, n_frames)).astype(int)
         q_pos_trajs_selection = q_pos_trajs[:, idxs, :]
 
         # Get time steps for the trajectory
         time_steps = None
         time_steps_tensor = None
-        #import pdb; pdb.set_trace()
+        
         if self.is_dynamic:
-            time_steps_full = self._get_timesteps_for_horizon(H)
+            time_steps_full = self._get_timesteps_for_horizon(H, time_step_range=time_step_range)
             if time_steps_full is not None:
                 # Select timesteps for selected frames
                 time_steps_tensor = time_steps_full[idxs]  # (n_frames,)
@@ -381,7 +399,7 @@ class DynPlanningTask(PlanningTask):
                     time_steps = to_numpy(time_steps_tensor)
                 else:
                     time_steps = np.array(time_steps_tensor)
-
+        # cimport pdb; pdb.set_trace()
         # Precompute collisions for all frames at once (batch, n_frames)
         collision_check_kwargs = {}
         if self.is_dynamic and time_steps_tensor is not None:
@@ -397,7 +415,7 @@ class DynPlanningTask(PlanningTask):
             full_traj_collision_kwargs = {}
             if self.is_dynamic and time_steps_tensor is not None:
                 # Need timesteps for full horizon
-                full_time_steps = self._get_timesteps_for_horizon(H)
+                full_time_steps = self._get_timesteps_for_horizon(H, time_step_range=time_step_range)
                 if full_time_steps is not None:
                     full_traj_collision_kwargs['timesteps'] = full_time_steps
 
@@ -466,7 +484,17 @@ class DynPlanningTask(PlanningTask):
                 # Render trajectories with precomputed colors (avoid recomputing collisions!)
                 if traj_colors is not None:
                     render_kwargs = kwargs.copy()
-                    render_kwargs["colors"] = traj_colors 
+                    if n_comp == 1 :
+                        render_kwargs["colors"] = traj_colors
+                    else :
+                        assert n_comp >= 2  
+                        import matplotlib.colors as mcolors
+                        colors = list(mcolors.BASE_COLORS.keys())
+                        tmp_colors = []
+                        for n_c in range(n_comp) : 
+                            tmp_colors += [colors[n_c]]*B
+                        render_kwargs["colors"] = tmp_colors
+
                     self.robot.render_trajectories(ax, q_pos_trajs=q_pos_trajs, **render_kwargs)
 
             # Get precomputed collisions for current frame
@@ -513,6 +541,128 @@ class DynPlanningTask(PlanningTask):
             process_axes(ax)
 
         create_animation_video(fig, animate_fn, n_frames=n_frames, fargs=(ax,), **kwargs)
+
+    def animate_robot_trajectories_comp(
+        self,
+        q_pos_trajs=None,
+        n_comp=None,
+        overlap_T_pts=0,
+        q_pos_start=None,
+        q_pos_goal=None,
+        plot_x_trajs=False,
+        n_frames=None,
+        remove_title=False,
+        process_axes=lambda x: x,
+        time_step_range=None,
+        anim_time=None,
+        video_filepath=None,
+        **kwargs,
+    ):
+        """
+        Animate composed trajectory segments without merging them.
+
+        Each segment keeps its own time window, so overlapping portions are shown moving together.
+        Colors follow a simple per-segment palette derived from matplotlib base colors.
+
+        Args:
+            q_pos_trajs: (n_comp, batch, horizon, q_dim) or (batch_total, horizon, q_dim)
+            n_comp: number of segments (required when input is flattened)
+            overlap_T_pts: overlap length in time steps between consecutive segments
+            plot_x_trajs: if True, draw full trajectories (no collision checking)
+            n_frames: total frames; defaults to total horizon with overlaps
+        """
+        if q_pos_trajs is None:
+            return
+
+        if q_pos_trajs.ndim == 4:
+            n_comp_in, batch, horizon, dim = q_pos_trajs.shape
+            n_comp = n_comp or n_comp_in
+        elif q_pos_trajs.ndim == 3:
+            if n_comp is None:
+                raise ValueError("n_comp must be provided when q_pos_trajs is flattened (3D).")
+            batch_total, horizon, dim = q_pos_trajs.shape
+            if batch_total % n_comp != 0:
+                raise ValueError("batch dimension not divisible by n_comp.")
+            batch = batch_total // n_comp
+            q_pos_trajs = einops.rearrange(q_pos_trajs, '(n b) h d -> n b h d', n=n_comp, b=batch)
+        else:
+            raise ValueError("q_pos_trajs must be 3D or 4D.")
+
+        stride = horizon - overlap_T_pts
+        total_horizon = horizon + (n_comp - 1) * stride
+        n_frames = n_frames or total_horizon
+
+        idxs = np.round(np.linspace(0, total_horizon - 1, n_frames)).astype(int)
+
+        # colors per segment (repeated for batch)
+        color_keys = list(mcolors.BASE_COLORS.keys())
+        seg_colors = [color_keys[i % len(color_keys)] for i in range(n_comp)]
+        per_robot_colors = [c for c in seg_colors for _ in range(batch)]
+
+        # optional full-trajectory rendering
+        def render_full_trajs(ax):
+            if not plot_x_trajs:
+                return
+            render_kwargs = kwargs.copy()
+            render_kwargs["colors"] = per_robot_colors
+            self.robot.render_trajectories(ax, q_pos_trajs=einops.rearrange(q_pos_trajs, 'n b h d -> (n b) h d'), **render_kwargs)
+
+        # timesteps for dynamic env; extend to total horizon
+        time_steps = None
+        if self.is_dynamic:
+            time_steps_full = self._get_timesteps_for_horizon(total_horizon, time_step_range=time_step_range)
+            if time_steps_full is not None:
+                time_steps = to_numpy(time_steps_full[idxs])
+
+        fig, ax = create_fig_and_axes(dim=self.env.dim)
+
+        def animate_fn(i, ax):
+            ax.clear()
+            if not remove_title:
+                title = f"step: {idxs[i]}/{total_horizon-1}"
+                if time_steps is not None:
+                    title += f", time: {time_steps[i]:.3f}s"
+                ax.set_title(title)
+
+            current_time = time_steps[i] if time_steps is not None else None
+            if self.is_dynamic and hasattr(self.env, 'render'):
+                sig = inspect.signature(self.env.render)
+                if 'time' in sig.parameters and current_time is not None:
+                    self.env.render(ax, time=current_time)
+                else:
+                    self.env.render(ax)
+            else:
+                self.env.render(ax)
+
+            render_full_trajs(ax)
+
+            # render active segments at this global step
+            for n_idx in range(n_comp):
+                start = stride * n_idx
+                end = start + horizon
+                if start <= idxs[i] < end:
+                    local_idx = idxs[i] - start
+                    qs = q_pos_trajs[n_idx, :, local_idx, :]
+                    for b_idx, q in enumerate(qs):
+                        color = per_robot_colors[n_idx * batch + b_idx]
+                        self.robot.render(
+                            ax,
+                            q_pos=q,
+                            color=color,
+                            arrow_length=0.1,
+                            arrow_alpha=0.5,
+                            arrow_linewidth=1.0,
+                            **kwargs,
+                        )
+
+            if q_pos_start is not None:
+                self.robot.render(ax, q_pos_start, color="green", cmap="Greens", **kwargs)
+            if q_pos_goal is not None:
+                self.robot.render(ax, q_pos_goal, color="purple", cmap="Purples", **kwargs)
+
+            process_axes(ax)
+
+        create_animation_video(fig, animate_fn, n_frames=n_frames, fargs=(ax,), anim_time=anim_time, video_filepath=video_filepath, **kwargs)
 
     def animate_opt_iters_robots(
         self,
@@ -840,4 +990,3 @@ class DynPlanningTask(PlanningTask):
 
         # Update axis limits
         ax.autoscale()
-

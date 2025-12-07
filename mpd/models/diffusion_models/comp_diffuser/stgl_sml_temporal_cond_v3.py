@@ -63,8 +63,6 @@ class Unet1D_TjTi_Stgl_Cond_V3(Unet1D_TjTi_Stgl_Cond_V2):
             - context_d (normalized): context_qs, context_ee_pose_goal, progress, delta_to_goal 
         '''
         if not warm_up :
-            global_emb = self.context_model(**tj_cond['context_d'])
-
             ### comp_diffuser 
             is_st_inpat = tj_cond['is_st_inpat'] ## torch tensor gpu
             is_end_inpat = tj_cond['is_end_inpat']
@@ -87,36 +85,96 @@ class Unet1D_TjTi_Stgl_Cond_V3(Unet1D_TjTi_Stgl_Cond_V2):
             st_ovlp_is_drop = tj_cond['st_ovlp_is_drop']
             end_ovlp_is_drop = tj_cond['end_ovlp_is_drop']
             force_zero_end_ovlp = tj_cond.get('force_zero_end_ovlp', False)
-            
-            if st_ovlp_is_drop is not None: ##
-                st_ovlp_feat = self.st_ovlp_model(tj_cond['st_ovlp_traj'], 
-                                        time=tj_cond['st_ovlp_t'])
-                assert len(st_ovlp_is_drop) == len(st_ovlp_feat)
-                assert st_ovlp_is_drop.dtype == torch.bool ## a numpy array
-                st_ovlp_feat[ st_ovlp_is_drop ] = 0.
-                # (~st_ovlp_is_drop) == 
-                assert not torch.logical_and(~st_ovlp_is_drop, is_st_inpat).any() ## must be false
-                
-            else:
-                ## no cond if None
-                # st_ovlp_feat = torch.zeros_like(st_ovlp_feat)
-                st_ovlp_feat = torch.zeros( (x.shape[0], self.st_ovlp_model.out_dim), device=x.device)
 
-            if self.end_ovlp_model is not None: 
-                if force_zero_end_ovlp:
-                    end_ovlp_feat = torch.zeros((x.shape[0], self.end_ovlp_model.out_dim), device=x.device)
+            # reuse single computation for CFG triplets (global / uncond / local)
+            use_cfg_triplet = (not only_uncond) and (b_size % 3 == 0)
+            if use_cfg_triplet:
+                base_bs = b_size // 3
 
-                elif tj_cond['end_ovlp_is_drop'] is not None:
-                    end_ovlp_feat = self.end_ovlp_model(tj_cond['end_ovlp_traj'],
-                                                        time=tj_cond['end_ovlp_t'])
-                    end_ovlp_feat[ tj_cond['end_ovlp_is_drop'] ] = 0.
-                    assert end_ovlp_is_drop.dtype == torch.bool
-                    assert not torch.logical_and(~end_ovlp_is_drop, is_end_inpat).any()
+                def _slice_cond(val):
+                    if torch.is_tensor(val) and val.shape[0] == b_size:
+                        return val[:base_bs]
+                    return val
+
+                context_d_full = tj_cond['context_d']
+                needs_slice = any(torch.is_tensor(v) and v.shape[0] == b_size for v in context_d_full.values())
+                context_d_base = (
+                    {k: _slice_cond(v) if torch.is_tensor(v) and v.shape[0] == b_size else v
+                     for k, v in context_d_full.items()}
+                    if needs_slice else context_d_full
+                )
+                global_emb_base = self.context_model(**context_d_base)
+
+                if st_ovlp_is_drop is not None:
+                    st_ovlp_feat_base = self.st_ovlp_model(
+                        tj_cond['st_ovlp_traj'][:base_bs],
+                        time=tj_cond['st_ovlp_t'][:base_bs],
+                    )
+                    assert st_ovlp_is_drop.dtype == torch.bool
+                    st_ovlp_feat_base[st_ovlp_is_drop[:base_bs]] = 0.
+                    assert not torch.logical_and(~st_ovlp_is_drop[:base_bs], is_st_inpat[:base_bs]).any()
                 else:
-                    # end_ovlp_feat = torch.zeros_like(end_ovlp_feat)
-                    end_ovlp_feat = torch.zeros( (x.shape[0], self.end_ovlp_model.out_dim), device=x.device)
-            else : 
-                end_ovlp_feat = None
+                    st_ovlp_feat_base = torch.zeros((base_bs, self.st_ovlp_model.out_dim), device=x.device)
+
+                if self.end_ovlp_model is not None:
+                    if force_zero_end_ovlp:
+                        end_ovlp_feat_base = torch.zeros((base_bs, self.end_ovlp_model.out_dim), device=x.device)
+                    elif tj_cond['end_ovlp_is_drop'] is not None:
+                        end_ovlp_feat_base = self.end_ovlp_model(
+                            tj_cond['end_ovlp_traj'][:base_bs],
+                            time=tj_cond['end_ovlp_t'][:base_bs],
+                        )
+                        end_ovlp_feat_base[end_ovlp_is_drop[:base_bs]] = 0.
+                        assert end_ovlp_is_drop.dtype == torch.bool
+                        assert not torch.logical_and(~end_ovlp_is_drop[:base_bs], is_end_inpat[:base_bs]).any()
+                    else:
+                        end_ovlp_feat_base = torch.zeros((base_bs, self.end_ovlp_model.out_dim), device=x.device)
+                else:
+                    end_ovlp_feat_base = None
+
+                zero_global = torch.zeros_like(global_emb_base)
+                global_emb = torch.cat((global_emb_base, zero_global, zero_global), dim=0)
+
+                zero_st = torch.zeros_like(st_ovlp_feat_base)
+                st_ovlp_feat = torch.cat((zero_st, zero_st, st_ovlp_feat_base), dim=0)
+
+                if end_ovlp_feat_base is not None:
+                    zero_end = torch.zeros_like(end_ovlp_feat_base)
+                    end_ovlp_feat = torch.cat((zero_end, zero_end, end_ovlp_feat_base), dim=0)
+                else:
+                    end_ovlp_feat = None
+            else:
+                global_emb = self.context_model(**tj_cond['context_d'])
+
+                if st_ovlp_is_drop is not None: ##
+                    st_ovlp_feat = self.st_ovlp_model(tj_cond['st_ovlp_traj'], 
+                                            time=tj_cond['st_ovlp_t'])
+                    assert len(st_ovlp_is_drop) == len(st_ovlp_feat)
+                    assert st_ovlp_is_drop.dtype == torch.bool ## a numpy array
+                    st_ovlp_feat[ st_ovlp_is_drop ] = 0.
+                    # (~st_ovlp_is_drop) == 
+                    assert not torch.logical_and(~st_ovlp_is_drop, is_st_inpat).any() ## must be false
+                    
+                else:
+                    ## no cond if None
+                    # st_ovlp_feat = torch.zeros_like(st_ovlp_feat)
+                    st_ovlp_feat = torch.zeros( (x.shape[0], self.st_ovlp_model.out_dim), device=x.device)
+
+                if self.end_ovlp_model is not None: 
+                    if force_zero_end_ovlp:
+                        end_ovlp_feat = torch.zeros((x.shape[0], self.end_ovlp_model.out_dim), device=x.device)
+
+                    elif tj_cond['end_ovlp_is_drop'] is not None:
+                        end_ovlp_feat = self.end_ovlp_model(tj_cond['end_ovlp_traj'],
+                                                            time=tj_cond['end_ovlp_t'])
+                        end_ovlp_feat[ tj_cond['end_ovlp_is_drop'] ] = 0.
+                        assert end_ovlp_is_drop.dtype == torch.bool
+                        assert not torch.logical_and(~end_ovlp_is_drop, is_end_inpat).any()
+                    else:
+                        # end_ovlp_feat = torch.zeros_like(end_ovlp_feat)
+                        end_ovlp_feat = torch.zeros( (x.shape[0], self.end_ovlp_model.out_dim), device=x.device)
+                else : 
+                    end_ovlp_feat = None
 
             ## Here we create corresponding condition feature to let the model know if we actually overwrite!
             if self.inpaint_token_type == 'const':
@@ -148,19 +206,21 @@ class Unet1D_TjTi_Stgl_Cond_V3(Unet1D_TjTi_Stgl_Cond_V2):
             #     if third_fd:
 
             if not only_uncond : 
-                b_s = len(st_ovlp_feat)
-                # drop the second half
-                assert b_s % 3 == 0
-                tmp_batch = int(b_s)//3
-                # first 1/3 is global
-                # second 1/3 is uncond
-                # last 1/3 is local
-                st_ovlp_feat[:2*tmp_batch] = 0.
-                if self.end_ovlp_model is not None : 
-                    end_ovlp_feat[:2*tmp_batch] = 0. 
-                else :
-                    end_ovlp_feat = None
-                global_emb[tmp_batch:] = 0.
+                if not use_cfg_triplet:
+                    assert NotImplementedError, "Using inefficient method"
+                    # b_s = len(st_ovlp_feat)
+                    # # drop the second half
+                    # assert b_s % 3 == 0
+                    # tmp_batch = int(b_s)//3
+                    # # first 1/3 is global
+                    # # second 1/3 is uncond
+                    # # last 1/3 is local
+                    # st_ovlp_feat[:2*tmp_batch] = 0.
+                    # if self.end_ovlp_model is not None : 
+                    #     end_ovlp_feat[:2*tmp_batch] = 0. 
+                    # else :
+                    #     end_ovlp_feat = None
+                    # global_emb[tmp_batch:] = 0.
             else : 
                 st_ovlp_feat = torch.zeros( (x.shape[0], self.st_ovlp_model.out_dim), device=x.device)
                 end_ovlp_feat = None

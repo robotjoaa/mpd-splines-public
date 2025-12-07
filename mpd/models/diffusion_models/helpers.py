@@ -42,7 +42,13 @@ def extract_2d(a, t, x_shape):
 
     return out
 
-def batch_repeat_tensor_in_dict(x: torch.Tensor, t_2d: torch.Tensor, cond_dd: dict, n_rp: int):
+def batch_repeat_tensor_in_dict(
+    x: torch.Tensor,
+    t_2d: torch.Tensor,
+    cond_dd: dict,
+    n_rp: int,
+    repeat_context: bool = True,
+):
     '''
     FIXED: Return a new dict rather than modified the original Dict!
     '''
@@ -55,6 +61,10 @@ def batch_repeat_tensor_in_dict(x: torch.Tensor, t_2d: torch.Tensor, cond_dd: di
 
     new_dd = {}
     for k in cond_dd.keys():
+        if k == 'context_d' and not repeat_context:
+            # reuse context dict to avoid unnecessary copies (e.g., cfg triplets sliced later)
+            new_dd[k] = cond_dd[k]
+            continue
         if torch.is_tensor(cond_dd[k]):
             new_dd[k] = cond_dd[k].repeat([n_rp] + [1,] * len(cond_dd[k].shape[1:]))
         elif type(cond_dd[k]) == np.ndarray:

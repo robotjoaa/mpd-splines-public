@@ -250,7 +250,7 @@ def experiment(
                                 [ 0.0000,  1.0000,  0.0000,  problems['q_goal'][1]],
                                 [ 0.0000,  0.0000,  1.0000,  0.0000]],  **tensor_args)
         else : 
-            q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
+            #q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
 
             q_pos_start = to_torch([-0.9, -0.9165], **tensor_args)
             q_pos_goal = to_torch([0.9,  0.9],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
