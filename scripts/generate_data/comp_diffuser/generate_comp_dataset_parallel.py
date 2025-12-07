@@ -10,44 +10,51 @@ from tqdm import tqdm
 
 
 def sample_segment_worker(args):
-    """Executed in worker process."""
     (
-        out_idx,      # output index
-        base_idx,     # index into original dataset
-        input_path,
-        min_frac,
-        max_frac,
-        max_seg_len,
-        seed,
+        out_idx, base_idx, input_path,
+        min_frac, max_frac, max_seg_len, seq_len,
+        seed
     ) = args
 
     rng = np.random.default_rng(seed + out_idx)
 
-    # Open file inside worker (safe)
+    # Load full path inside worker (safe)
     with h5py.File(input_path, "r") as f:
         path = np.asarray(f["sol_path"][base_idx])
+        task_id = f["task_id"][base_idx]
 
     horizon = path.shape[0]
+
+    # Segment sampling
     min_len = max(1, int(math.ceil(horizon * min_frac)))
     max_len_val = max(min_len, int(math.floor(horizon * max_frac)))
-    seg_len = rng.integers(min_len, max_len_val + 1)
+    seg_len = int(rng.integers(min_len, max_len_val + 1))
 
     max_start = horizon - seg_len
     start_idx = int(rng.integers(0, max_start + 1))
 
     segment = path[start_idx:start_idx + seg_len]
 
-    padded = np.full((max_seg_len, *path.shape[1:]),
-                     np.nan, dtype=path.dtype)
+    # padded segment
+    padded = np.full((max_seg_len, *path.shape[1:]), np.nan, dtype=path.dtype)
     padded[:seg_len] = segment
+
+    # delta-to-goal
+    delta = path[-1] - segment[-1]
 
     return (
         out_idx,
         padded,
-        start_idx / horizon,
-        path[0],      # start state
-        path[-1],     # goal state
-        base_idx,
+        path,                      # full path
+        start_idx,
+        seg_len,
+        start_idx / horizon,       # progress
+        delta,
+        path[0],                   # start_state
+        path[-1],                  # goal_state
+        horizon,                   # full_traj_len
+        task_id,
+        base_idx
     )
 
 def derive_output_path(input_path: str, output_path: Optional[str]) -> str:
@@ -56,35 +63,15 @@ def derive_output_path(input_path: str, output_path: Optional[str]) -> str:
     base, ext = os.path.splitext(input_path)
     return f"{base}_comp_segments{ext}"
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Generate composed trajectory dataset with random segments.")
-    parser.add_argument(
-        "--input",
-        type=str,
-        required=True,
-        help="Path to the source dataset_merged_doubled.hdf5 file.",
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        default=None,
-        help="Output path for the augmented dataset. Defaults to <input>_comp_segments.hdf5.",
-    )
-    parser.add_argument("--min-frac", type=float, default=0.3, help="Minimum segment fraction (0,1].")
-    parser.add_argument("--max-frac", type=float, default=0.6, help="Maximum segment fraction (0,1].")
-    parser.add_argument(
-        "--multiplier",
-        type=int,
-        default=3,
-        help="Dataset size multiplier from original dataset size (default 3).",
-    )
-    parser.add_argument("--seed", type=int, default=0, help="Seed for reproducible sampling.")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", default=None)
+    parser.add_argument("--min-frac", type=float, default=0.3)
+    parser.add_argument("--max-frac", type=float, default=0.6)
+    parser.add_argument("--multiplier", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
-
-    assert 0 < args.min_frac <= 1.0, "min-frac must be in (0, 1]."
-    assert 0 < args.max_frac <= 1.0, "max-frac must be in (0, 1]."
-    assert args.min_frac <= args.max_frac, "min-frac must be <= max-frac."
 
     input_path = args.input
     output_path = derive_output_path(input_path, args.output)
@@ -101,17 +88,19 @@ def main():
         max_seg_len = int(math.ceil(seq_len * args.max_frac))
 
         # --------------------------------------------
-        # 🧠 Allocate output arrays ONCE in RAM
+        # Preallocate arrays
         # --------------------------------------------
-        seg_array = np.full(
-            (num_trajs, max_seg_len, *base_shape),
-            np.nan,
-            dtype=scalar_dtype
-        )
-        progress_array = np.zeros((num_trajs,), dtype=np.float32)
+        seg_array = np.full((num_trajs, max_seg_len, *base_shape), np.nan, dtype=scalar_dtype)
+        full_path_array = np.zeros((num_trajs, seq_len, *base_shape), dtype=scalar_dtype)
+
+        progress_array = np.zeros(num_trajs, dtype=np.float32)
+        delta_array = np.zeros((num_trajs, *base_shape), dtype=scalar_dtype)
+        start_idx_array = np.zeros(num_trajs, dtype=np.int32)
+        seg_len_array = np.zeros(num_trajs, dtype=np.int32)
         start_array = np.zeros((num_trajs, *base_shape), dtype=scalar_dtype)
         goal_array = np.zeros((num_trajs, *base_shape), dtype=scalar_dtype)
-        task_id_array = np.zeros((num_trajs,), dtype=src["task_id"].dtype)
+        full_len_array = np.zeros(num_trajs, dtype=np.int32)
+        task_id_array = np.zeros(num_trajs, dtype=src["task_id"].dtype)
 
         # --------------------------------------------
         # Build job list
@@ -120,74 +109,83 @@ def main():
         for out_idx in range(num_trajs):
             base_idx = out_idx % num_trajs_original
             jobs.append((
-                out_idx,
-                base_idx,
-                input_path,
-                args.min_frac,
-                args.max_frac,
-                max_seg_len,
-                args.seed,
+                out_idx, base_idx, input_path,
+                args.min_frac, args.max_frac,
+                max_seg_len, seq_len,
+                args.seed
             ))
 
         # --------------------------------------------
-        # Run worker processes
+        # Run multiprocessing worker sampling
         # --------------------------------------------
         with Pool() as pool:
             for (
                 out_idx,
                 padded,
-                prog,
-                start_st,
-                goal_st,
-                base_idx,
+                full_path,
+                start_idx,
+                seg_len,
+                progress,
+                delta,
+                start_state,
+                goal_state,
+                full_len,
+                task_id,
+                base_idx
             ) in tqdm(pool.imap(sample_segment_worker, jobs),
-                      total=num_trajs,
-                      desc="Sampling (parallel)"):
+                      total=num_trajs, desc="Sampling segments (parallel)"):
 
-                # Store results into preallocated arrays
                 seg_array[out_idx] = padded
-                progress_array[out_idx] = prog
-                start_array[out_idx] = start_st
-                goal_array[out_idx] = goal_st
-                task_id_array[out_idx] = src["task_id"][base_idx]
+                full_path_array[out_idx] = full_path
+
+                progress_array[out_idx] = progress
+                delta_array[out_idx] = delta
+                start_idx_array[out_idx] = start_idx
+                seg_len_array[out_idx] = seg_len
+                start_array[out_idx] = start_state
+                goal_array[out_idx] = goal_state
+                full_len_array[out_idx] = full_len
+                task_id_array[out_idx] = task_id
 
         # --------------------------------------------
-        # 💾 ONE-SHOT HDF5 WRITE
+        # Now handle replicated passthrough datasets
         # --------------------------------------------
-        with h5py.File(output_path, "w") as dst:
-            dst.create_dataset(
-                "sol_path",
-                data=seg_array,
-                dtype=scalar_dtype,
-                compression="lzf"
-            )
-            dst.create_dataset(
-                "progress",
-                data=progress_array,
-                dtype=np.float32,
-                compression="lzf"
-            )
-            dst.create_dataset(
-                "start_state",
-                data=start_array,
-                dtype=scalar_dtype,
-                compression="lzf"
-            )
-            dst.create_dataset(
-                "goal_state",
-                data=goal_array,
-                dtype=scalar_dtype,
-                compression="lzf"
-            )
-            dst.create_dataset(
-                "task_id",
-                data=task_id_array,
-                dtype=task_id_array.dtype,
-                compression="lzf"
-            )
+        replicated_data = {}
+        for key, ds in src.items():
+            if key in {
+                "sol_path", "task_id",
+                "progress", "delta_to_goal",
+                "segment_start_idx", "segment_len",
+                "start_state", "goal_state",
+                "full_traj_len", "sol_path_full"
+            }:
+                continue
 
-    # print(f"Saved composed dataset with {num_trajs} segments to {output_path}")
+            if ds.shape and ds.shape[0] == num_trajs_original:
+                replicated_data[key] = np.asarray(ds)[
+                    np.arange(num_trajs) % num_trajs_original
+                ]
+            else:
+                replicated_data[key] = ds[:]
 
+    # --------------------------------------------
+    # Write all datasets ONCE
+    # --------------------------------------------
+    with h5py.File(output_path, "w") as dst:
+        dst.create_dataset("sol_path", data=seg_array, compression="lzf")
+        dst.create_dataset("sol_path_full", data=full_path_array, compression="lzf")
+        dst.create_dataset("progress", data=progress_array, compression="lzf")
+        dst.create_dataset("delta_to_goal", data=delta_array, compression="lzf")
+        dst.create_dataset("segment_start_idx", data=start_idx_array, compression="lzf")
+        dst.create_dataset("segment_len", data=seg_len_array, compression="lzf")
+        dst.create_dataset("start_state", data=start_array, compression="lzf")
+        dst.create_dataset("goal_state", data=goal_array, compression="lzf")
+        dst.create_dataset("full_traj_len", data=full_len_array, compression="lzf")
+        dst.create_dataset("task_id", data=task_id_array, compression="lzf")
+
+        # write passthrough datasets
+        for key, arr in replicated_data.items():
+            dst.create_dataset(key, data=arr, compression="lzf")
 
     print(f"Saved composed dataset with {num_trajs} segments to {output_path}")
 
