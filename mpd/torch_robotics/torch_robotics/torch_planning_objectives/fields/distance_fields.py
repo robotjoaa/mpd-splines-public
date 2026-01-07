@@ -215,11 +215,12 @@ class CollisionObjectBase(EmbodimentDistanceFieldBase):
         cutoff_margin = kwargs.get("margin", self.cutoff_margin)
         # collision_margins are the spheres radii around the links
         margin = self.collision_margins + cutoff_margin
+        # print("compute_embodiment margin : ",margin, f"{self.collision_margins=} {cutoff_margin=}")
         signed_distances = self.object_signed_distances(link_pos, **kwargs)
         collisions = signed_distances <= margin
         # reduce over points (dim -1) and over objects (dim -2)
         any_collision = torch.any(torch.any(collisions, dim=-1), dim=-1)
-        #print(f"{any_collision=}")
+        # print(f"{any_collision=}")
         return any_collision
 
     @abstractmethod

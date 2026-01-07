@@ -29,6 +29,7 @@ class EnvDynBase:
 
     def __init__(
         self,
+        # env=None,
         k_smooth=20.0,
         smoothing_method="Quadratic",
         time_range=(0.0, 1.0),
@@ -43,8 +44,11 @@ class EnvDynBase:
             **kwargs: Arguments passed to EnvBase constructor
         """
         # Create wrapped EnvBase instance
+        # if env is None : 
+        #     self.env = EnvBase(**kwargs)
+        # else : 
+        #     self.env = env
         self.env = EnvBase(**kwargs)
-
         # Smooth SDF parameters
         self.k_smooth = k_smooth
         self.smoothing_method = smoothing_method
@@ -223,6 +227,7 @@ class EnvDynBase:
             # Clamp to valid range
             time = max(self.time_range[0], min(self.time_range[1], time))
             # Update all moving objects
+            # print("EnvDynBase:",time)
             self._update_moving_objects_at_time(time)
 
         # Delegate to wrapped EnvBase for actual rendering

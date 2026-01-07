@@ -177,7 +177,7 @@ class CollisionObjectDistanceFieldTimeVarying(CollisionObjectBase):
                         link_pos_query, get_gradient=False
                     )
                 # sdf_vals: (batch*horizon*num_links,)
-
+                # import pdb; pdb.set_trace()
                 # Reshape back
                 sdf_vals = sdf_vals.reshape(bh, num_links)
                 dfs.append(sdf_vals)

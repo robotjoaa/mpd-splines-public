@@ -1,14 +1,13 @@
-model_dir_ddpm_bspline: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_diffusion_models-EnvCoblEmpty2D_2025-11-22_05-09-15/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvCoblEmpty2D-RobotPointMass2DBig/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___22/parametric_trajectory_class___ParametricTrajectoryBspline/0'
+model_dir_ddpm_bspline: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_2025-11-30_05-10-28/generative_model_class___CompDiffusionModel/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_qs___True/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___22/parametric_trajectory_class___ParametricTrajectoryBspline/len_ovlp_cd___4/0'
 
 model_dir_cvae_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/data_trained_models/launch_train_cvae_models-v04_2024-09-17_21-46-47/generative_model_class___CVAEModel/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0'
 
-# model_dir_ddpm_waypoints: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_diffusion_models-EnvCoblEmpty2D_2025-11-22_05-11-01/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvCoblEmpty2D-RobotPointMass2DBig/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___22/parametric_trajectory_class___ParametricTrajectoryWaypoints/0'
-model_dir_ddpm_waypoints: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_diffusion_models-EnvCoblEmpty2D_2025-11-22_05-10-32/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvCoblEmpty2D-RobotPointMass2DBig/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___False/unet_input_dim___16/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___22/parametric_trajectory_class___ParametricTrajectoryWaypoints/0'
-model_selection: 'bspline'  # 'bspline', 'waypoints'
+model_dir_ddpm_waypoints: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_2025-11-28_17-31-50/generative_model_class___CompDiffusionModel/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_qs___True/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___22/parametric_trajectory_class___ParametricTrajectoryWaypoints/len_ovlp_cd___4/0'
+model_selection: 'waypoints'  # 'bspline', 'waypoints'
 
 #######################################################################################################################
 # minimum distance between start and goal configurations np.sqrt(2*1**2)=1.4
-min_distance_q_pos_start_goal: 0.4
+min_distance_q_pos_start_goal: 1.4
 
 # environment options
 env_id_replace: null
@@ -18,22 +17,15 @@ grasped_object: null
 # collision avoidance/checking options
 # extra margin for object collision cost (sdf is clamped if it is greater than this value)
 # 0.02 for 2D tasks, 0.05 for panda tasks
-obstacle_cutoff_margin_extra: 0.015
+obstacle_cutoff_margin_extra: 0.02
 # Points whose distance to the objects is less than this margin are considered in collision
 margin_for_dense_collision_checking:  0.0
-
-# evaluation path
-eval_dataset_path: '/home/sisrel/pjw/mpd-splines-public/data_trajectories/EnvCoblEmpty2D-RobotPointMass2DBig/eval_dataset.pkl'
-
-# margin, gradient scales 
-moving_object_margin_scale: 1
-moving_object_gradient_scale: 1
 
 #######################################################################################################################
 # task options
 
-num_T_pts: 80  # number of time points in the trajectory (> 128 for smoother results)
-trajectory_duration: 8.0  # seconds
+num_T_pts: 128  # number of time points in the trajectory (> 128 for smoother results)
+trajectory_duration: 10.0  # seconds
 phase_time_class: 'PhaseTimeLinear'  # PhaseTimeLinear, PhaseTimeSigmoid
 #phase_time_class: 'PhaseTimeSigmoid'  # PhaseTimeLinear, PhaseTimeSigmoid
 
@@ -68,6 +60,11 @@ compute_costs_with_xrecon: false
 n_diffusion_steps_without_noise: 0
 
 extra_mp_steps: 0  # number of extra motion planning gradient steps
+
+## comp options
+
+n_comp: 3 
+len_ovlp_cd: 4
 
 # ddim options
 ddim:

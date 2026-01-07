@@ -1,4 +1,5 @@
 import os
+import isaacgym
 import glob
 import torch
 import numpy as np
@@ -13,14 +14,17 @@ from dotmap import DotMap
 # load results dict from experiment
 LOG_DIR = "/home/sisrel/pjw/mpd-splines-public/scripts/inference/logs"
 
-def load_results(exp_name, option_l):
+def load_results(exp_name, option_l, plan_ids=None, pattern=None):
     all_results = {}
 
     # find
     # pattern = os.path.join(LOG_DIR, exp_name,"**/results_single_plan-*")
-    pattern = os.path.join(LOG_DIR, exp_name,"**/args.yaml")
+    if pattern is None : 
+        pattern = os.path.join(LOG_DIR, exp_name,"**/args.yaml")
     exp_base = glob.glob(pattern, recursive = True)
     exp_base = [os.path.dirname(exp) for exp in exp_base]
+
+    print(exp_base)
     print("num settings : ", len(exp_base))
     for exp in exp_base :
         n_idx = []
@@ -30,21 +34,22 @@ def load_results(exp_name, option_l):
             n_idx.append(match_idx[0])
 
         selected_name = tuple(n_idx)
-        pattern = os.path.join(exp,"results_single_plan-*")
-        file_names = glob.glob(pattern)
-        n_exps = len(file_names)
-        result = []
-        # for i in range(n_exps) :
-        #     tmp_result = torch.load(
-        #         os.path.join(exp, f"results_single_plan-{i:03d}.pt"),
-        #         weights_only=False
-        #     )
+        if plan_ids is not None:
+            # Load only the requested indices
+            file_names = []
+            for pid in plan_ids:
+                fname = os.path.join(exp, f"results_single_plan-{pid:03d}.pt")
+                if os.path.exists(fname):
+                    file_names.append(fname)
+                else:
+                    print(f"Warning: requested plan id {pid} not found in {exp}")
+        else:
+            pattern = os.path.join(exp,"results_single_plan-*")
+            file_names = glob.glob(pattern)
 
-        for filename in file_names : 
-            tmp_result = torch.load(
-                os.path.join(exp,os.path.basename(filename)),
-                weights_only=False
-            )
+        result = []
+        for filename in file_names:
+            tmp_result = torch.load(filename, weights_only=False)
             result.append(tmp_result)
         print(selected_name)
         all_results[selected_name] = result
@@ -132,6 +137,9 @@ def plot_start_goal_problems(all_results, option_l=None, save_dir=None, show_tra
             # Plot dynamic obstacle trajectories if available
             if hasattr(result, 'dyn_obj_config') and result.dyn_obj_config is not None:
                 for obj_idx, (obj_name, obj_config) in enumerate(result.dyn_obj_config.items()):
+                    # COBL stores the scenario idx as a plain integer; skip plotting it
+                    if isinstance(obj_config, np.integer):
+                        continue
                     if 'keyframe_positions' in obj_config:
                         positions = obj_config['keyframe_positions']
 
@@ -414,6 +422,9 @@ def plot_metric_comparison(aggregated_metrics, save_dir=None, option_l=None):
     else:
         plt.show()
 
+def safe_tolist(x):
+    return x.tolist() if hasattr(x, "tolist") else x
+
 
 def find_failed_problems(all_results, option_l=None, save_dir=None):
     """
@@ -465,11 +476,15 @@ def find_failed_problems(all_results, option_l=None, save_dir=None):
                 # Add dynamic obstacle info if available
                 if hasattr(result, 'dyn_obj_config') and result.dyn_obj_config is not None:
                     problem_info['dyn_obj_config'] = {}
+                    # import pdb;pdb.set_trace()
                     for obj_name, obj_config in result.dyn_obj_config.items():
-                        if 'keyframe_positions' in obj_config:
-                            problem_info['dyn_obj_config'][obj_name] = {
-                                'keyframe_positions': obj_config['keyframe_positions']
-                            }
+                        if isinstance(obj_config, np.integer):
+                            problem_info['dyn_obj_config'][obj_name] = obj_config
+                        else : 
+                            if 'keyframe_positions' in obj_config:
+                                problem_info['dyn_obj_config'][obj_name] = {
+                                    'keyframe_positions': obj_config['keyframe_positions']
+                                }
 
                 # Add metrics if available
                 if hasattr(result, 'metrics'):
@@ -502,15 +517,19 @@ def find_failed_problems(all_results, option_l=None, save_dir=None):
             for problem in failed_list:
                 problem_json = {'idx': problem['idx']}
                 if problem['q_pos_start'] is not None:
-                    problem_json['q_pos_start'] = problem['q_pos_start'].tolist()
+                    problem_json['q_pos_start'] = safe_tolist(problem['q_pos_start'])
                 if problem['q_pos_goal'] is not None:
-                    problem_json['q_pos_goal'] = problem['q_pos_goal'].tolist()
+                    problem_json['q_pos_goal'] = safe_tolist(problem['q_pos_goal'])
                 if 'dyn_obj_config' in problem:
                     problem_json['dyn_obj_config'] = {}
                     for obj_name, obj_data in problem['dyn_obj_config'].items():
-                        problem_json['dyn_obj_config'][obj_name] = {
-                            'keyframe_positions': obj_data['keyframe_positions'].tolist()
-                        }
+                        if isinstance(obj_data, np.integer):
+                            problem_json['dyn_obj_config'][obj_name] = int(obj_data)
+                        else : 
+                            if 'keyframe_positions' in obj_data:
+                                problem_json['dyn_obj_config'][obj_name] = {
+                                    'keyframe_positions': safe_tolist(obj_data['keyframe_positions'])
+                                }
                 if 'collision_intensity' in problem:
                     problem_json['collision_intensity'] = float(problem['collision_intensity']) if problem['collision_intensity'] is not None else None
                 if 'fraction_valid' in problem:
@@ -591,6 +610,8 @@ def find_hard_problems(all_results, option_l=None, k=10, save_dir=None):
         least_valid_indices = set([p['idx'] for p in top_k_least_valid])
         highest_collision_indices = set([p['idx'] for p in top_k_highest_collision])
         hard_indices = least_valid_indices.intersection(highest_collision_indices)
+        union = least_valid_indices.union(highest_collision_indices)
+        print(f"  Hard problem union: {union}")
 
         # Build detailed info for hard problems
         hard_list = []
@@ -617,7 +638,9 @@ def find_hard_problems(all_results, option_l=None, k=10, save_dir=None):
             if hasattr(result, 'dyn_obj_config') and result.dyn_obj_config is not None:
                 problem_info['dyn_obj_config'] = {}
                 for obj_name, obj_config in result.dyn_obj_config.items():
-                    if 'keyframe_positions' in obj_config:
+                    if isinstance(obj_config, np.integer):
+                        problem_info['dyn_obj_config'][obj_name] = obj_config
+                    elif 'keyframe_positions' in obj_config:
                         problem_info['dyn_obj_config'][obj_name] = {
                             'keyframe_positions': obj_config['keyframe_positions']
                         }
@@ -661,15 +684,18 @@ def find_hard_problems(all_results, option_l=None, k=10, save_dir=None):
                     'success': problem['success'],
                 }
                 if problem['q_pos_start'] is not None:
-                    problem_json['q_pos_start'] = problem['q_pos_start'].tolist()
+                    problem_json['q_pos_start'] = safe_tolist(problem['q_pos_start'])
                 if problem['q_pos_goal'] is not None:
-                    problem_json['q_pos_goal'] = problem['q_pos_goal'].tolist()
+                    problem_json['q_pos_goal'] = safe_tolist(problem['q_pos_goal'])
                 if 'dyn_obj_config' in problem:
                     problem_json['dyn_obj_config'] = {}
                     for obj_name, obj_data in problem['dyn_obj_config'].items():
-                        problem_json['dyn_obj_config'][obj_name] = {
-                            'keyframe_positions': obj_data['keyframe_positions'].tolist()
-                        }
+                        if isinstance(obj_data, np.integer):
+                            problem_json['dyn_obj_config'][obj_name] = int(obj_data)
+                        else:
+                            problem_json['dyn_obj_config'][obj_name] = {
+                                'keyframe_positions': safe_tolist(obj_data['keyframe_positions'])
+                            }
 
                 hard_problems_json[option_name].append(problem_json)
 
@@ -801,42 +827,91 @@ if __name__ == "__main__":
     # exp_name = "launch_inference-experiments-test_2025-11-07_16-48-33" # margin scale 2 
     # exp_name = "launch_inference-experiments-test_2025-11-07_17-18-05" # margin scale 2 failed
     # exp_name = "launch_inference-experiments-test_2025-11-07_17-32-29" # margin scale 1.5
-    exp_name = "launch_inference-experiments-test_2025-11-07_17-35-52" # margin scale 4 
+    # exp_name = "launch_inference-experiments-test_2025-11-07_17-35-52" # margin scale 4 
     # exp_name = "launch_inference-experiments-test_2025-11-07_17-40-57" # margin scale 4 failed
     # exp_name = "launch_inference-experiments-test_2025-11-17_22-35-48" # margin 4 grad scale 2 
     # exp_name = "launch_inference-experiments-test_2025-11-17_22-38-15" # margin 4 grad scale 10 
     # exp_name = "launch_inference-experiments-test_2025-11-17_23-32-27" # margin 4 grad scale 100
-    option_l = [["waypoints", "bspline"]] #bspline plot front
+    
+    # exp_name = "launch_inference-experiments-test_2025-12-08_03-00-28" # EnvSimpleExtra
+    # exp_name = "launch_inference-experiments-test_2025-12-07_20-15-14" #EnvSimpleDynExtra 
+    # exp_name = "launch_inference-experiments-test_2025-12-07_20-28-11" #EnvSimpleDynExtra hard
 
+    # exp_name = "launch_inference-experiments-test_2025-12-07_22-49-57" # EnvsimpleDyn
+    # exp_name = "launch_inference-experiments-test_2025-12-07_23-01-02" #EnvsimpleDyn Hard
+
+    # exp_name = "launch_inference-experiments-comp_v2_2025-12-07_20-52-25"
+    # exp_name = "launch_inference-experiments-comp_v2_2025-12-07_21-29-50" # Method trained wrong
+    # exp_name = "launch_inference-experiments-comp_v2_2025-12-07_21-49-11" #Method
+
+    exp_name = "launch_inference-experiments-comp_v2_2025-12-08_01-19-45" # method bspline simpledyn
+    # exp_name = "launch_inference-experiments-comp_v2_2025-12-08_01-23-53" # method simpledyn hard
+
+    # exp_name = "launch_inference-experiments-comp_v2_2025-12-08_03-21-03" # EnvSimpleExtra Bspline
+    # exp_name = "launch_inference-experiments-cobl_2025-12-08_04-30-56" # Cobl Bspline
+    # exp_name = "launch_inference-experiments-cobl_2025-12-08_05-19-41" # Cobl waypoint
+
+    exp_name = "launch_inference-experiments-cobl_2025-12-09_05-11-34" #cobl fixed
+    exp_name = "launch_inference-experiments-cobl_2025-12-09_05-28-01" # cobl 1, 1
+
+    exp_name = "launch_inference-experiments-cobl-comp_2025-12-09_06-30-53" # cobl method
+    plan_ids = None 
+    pattern = None
+    # option_l = [["waypoints"]]
+    option_l = [["bspline"]]
+    # option_l = [["waypoints", "bspline"]] #bspline plot front
+
+    # exp_name = "/home/sisrel/pjw/metrics_result/EnvSimple2DDyn"
+    # exp_name = "/home/sisrel/pjw/metrics_result/EnvSimple2DDynExtraHard"
+
+    # pattern = os.path.join(exp_name,"**/args.yaml")
+
+    # option_l = [["mpd", "ours"]]
+    
+    
+    # # simpledyn
+    # plan_ids = [2	9	10	14	20	24	27	34	36	40	
+    #             41	43	53	54	63	74	76	79	82	84	85	86	92	93	96
+    
+    # plan_ids = [2,9,10,14,20,24,27,34,36,40,\
+                # 41,43,53,54,63,74,76,79,82,84,85,86,92,93,96]
+
+    # # simpledyn hard
+    # plan_ids = [6,7,10,19,20,31,34,36,43,45,\
+    #             53,56,69,71,73,76,77,82,84,86,90,91,92,94,95]
+    # [6,7,31,32,36,40,42,43,44,45,\
+    #             53,71,76,77,82,84,86,90,91,94,95]
+    # plan_ids = list(set(np.arange(0,100)) - set([6,7,31,32,36,40,42,43,44,45,\
+    #             53,71,76,77,82,84,86,90,91,94,95] ))
     # Load results
     print("Loading results...")
-    all_results, option_l = load_results(exp_name, option_l)
+    all_results, option_l = load_results(exp_name, option_l, plan_ids=plan_ids, pattern = pattern)
+    # import pdb; pdb.set_trace()
+    # # Print sample result structure
+    # for k, v in all_results.items():
+    #     option_name_str = get_option_name_str(k, option_l)
+    #     print(f"\nOption {option_name_str}: {len(v)} samples")
+    #     if len(v) > 0:
+    #         print(f"  Sample result keys: {list(v[0].keys())}")
+    #         if hasattr(v[0], 'dyn_obj_config') and v[0].dyn_obj_config is not None:
+    #             print(f"  dyn_obj_config keys: {list(v[0].dyn_obj_config.keys())}")
+    #         if hasattr(v[0], 'metrics') and v[0].metrics is not None:
+    #             print(f"  metrics keys: {list(v[0].metrics.keys())}")
+    #         if hasattr(v[0], 'isaacgym_statistics') and v[0].isaacgym_statistics is not None:
+    #             print(f"  isaacgym keys: {list(v[0].isaacgym_statistics.keys())}")
+    #         # if hasattr(v[0], 'trajs_all'):
+    #         #     print(f"  trajs_all metrics: {list(v[0].trajs_all.keys())}")
+    #         # if hasattr(v[0], 'trajs_valid') and v[0].trajs_valid:
+    #         #     print(f"  trajs_valid metrics: {list(v[0].trajs_valid.keys())}")
+    #         # if hasattr(v[0], 'trajs_best') and v[0].trajs_best:
+    #         #     print(f"  trajs_best metrics: {list(v[0].trajs_best.keys())}")
 
-    # Print sample result structure
-    for k, v in all_results.items():
-        option_name_str = get_option_name_str(k, option_l)
-        print(f"\nOption {option_name_str}: {len(v)} samples")
-        if len(v) > 0:
-            print(f"  Sample result keys: {list(v[0].keys())}")
-            if hasattr(v[0], 'dyn_obj_config') and v[0].dyn_obj_config is not None:
-                print(f"  dyn_obj_config keys: {list(v[0].dyn_obj_config.keys())}")
-            if hasattr(v[0], 'metrics') and v[0].metrics is not None:
-                print(f"  metrics keys: {list(v[0].metrics.keys())}")
-            if hasattr(v[0], 'isaacgym_statistics') and v[0].isaacgym_statistics is not None:
-                print(f"  isaacgym keys: {list(v[0].isaacgym_statistics.keys())}")
-            # if hasattr(v[0], 'trajs_all'):
-            #     print(f"  trajs_all metrics: {list(v[0].trajs_all.keys())}")
-            # if hasattr(v[0], 'trajs_valid') and v[0].trajs_valid:
-            #     print(f"  trajs_valid metrics: {list(v[0].trajs_valid.keys())}")
-            # if hasattr(v[0], 'trajs_best') and v[0].trajs_best:
-            #     print(f"  trajs_best metrics: {list(v[0].trajs_best.keys())}")
-
-    # Create output directory
+    # # Create output directory
     output_dir = os.path.join(LOG_DIR, exp_name, "analysis")
 
-    # 1. Plot start/goal/problem distributions
-    print("\nPlotting start/goal/problem distributions...")
-    plot_start_goal_problems(all_results, option_l=option_l, save_dir=output_dir, show_trajectories=True)
+    # # 1. Plot start/goal/problem distributions
+    # print("\nPlotting start/goal/problem distributions...")
+    # # plot_start_goal_problems(all_results, option_l=option_l, save_dir=output_dir, show_trajectories=True)
 
     # 2. Aggregate metrics
     print("\nAggregating metrics...")
@@ -884,12 +959,12 @@ if __name__ == "__main__":
 
     aggregated_metrics = aggregate_metrics(all_results, metric_paths)
 
-    # 3. Print summary
-    print_metric_summary(aggregated_metrics)
+    # # 3. Print summary
+    # # print_metric_summary(aggregated_metrics)
 
-    # 4. Plot metric comparison
-    print("\nPlotting metric comparison...")
-    plot_metric_comparison(aggregated_metrics, save_dir=output_dir, option_l=option_l)
+    # # # 4. Plot metric comparison
+    # # print("\nPlotting metric comparison...")
+    # # plot_metric_comparison(aggregated_metrics, save_dir=output_dir, option_l=option_l)
 
     # 5. Plot KDE comparison for selected metrics
     print("\nPlotting KDE comparison...")

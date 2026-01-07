@@ -467,7 +467,7 @@ class GenerativeOptimizationPlanner:
         # )
         
         model_path = os.path.join(
-            args_inference.model_dir, "checkpoints", f'{"ema_" if args_train["use_ema"] else ""}model__iter_1500000.pth'
+            args_inference.model_dir, "checkpoints", f'{"ema_" if args_train["use_ema"] else ""}model__iter_300000.pth'
         )
         self.model = torch.load(model_path, map_location=tensor_args["device"])
         self.model.eval()
@@ -632,14 +632,16 @@ class GenerativeOptimizationPlanner:
                 trajectory_configs = { 'scenario_idx' :kwargs['map_config'].get('scenario_idx')}
             elif isinstance(self.planning_task.env, EnvDynSimple2DExtraObjects) :
                 # convert to tensor 
+                
                 for k, v in kwargs['map_config'].items() : 
+                    # print(f'{v["keyframe_times"]}')
                     tmp_traj = LinearTrajectory(
-                        keyframe_times = v['keyframe_times'],
-                        keyframe_positions = v['keyframe_positions'],
+                        keyframe_times = np.array(v['keyframe_times']),
+                        keyframe_positions = np.array(v['keyframe_positions']),
                         tensor_args = self.tensor_args
                     )
                     trajectory_configs[k] = tmp_traj
-                
+            # import pdb; pdb.set_trace() 
             self.planning_task.env.update_all_moving_object_trajectories(trajectory_configs)
             results_ns.update(
                 dyn_obj_config= kwargs['map_config']
@@ -647,7 +649,8 @@ class GenerativeOptimizationPlanner:
         else : 
             # create random dyn objs 
             if hasattr(self.planning_task.env, 'configure_moving_objects_from_start_goal'):
-                dyn_obj_config = self.planning_task.env.configure_moving_objects_from_start_goal(q_pos_start, q_pos_goal)
+                difficulty = kwargs.get('is_hard', False)
+                dyn_obj_config = self.planning_task.env.configure_moving_objects_from_start_goal(q_pos_start, q_pos_goal, is_hard=difficulty)
                 results_ns.update(
                     dyn_obj_config=dyn_obj_config
                 )
@@ -662,7 +665,6 @@ class GenerativeOptimizationPlanner:
         input_data_one_sample = dict_to_device(input_data_one_sample, self.tensor_args["device"])
         hard_conds = input_data_one_sample["hard_conds"]
         context_d = self.dataset.build_context(input_data_one_sample, is_train = False)
-
         with TimerCUDA() as t_inference_total:
             control_points_recon_normalized_iters = None
             if "rrtconnect" in self.args_inference.planner_alg:
@@ -769,7 +771,9 @@ class GenerativeOptimizationPlanner:
                     # normalize each trajectory
                     if 'trajs_list_topn' in results_ns : 
                         tmp_trajs = results_ns.trajs_list_topn['pos']
-                        
+                        # Ensure collision results (stored on CPU) are moved back to the model device before unnormalizing
+                        tmp_trajs = tmp_trajs.to(self.tensor_args["device"])
+
                         trajs_list_norm = self.dataset.unnormalize_control_points(tmp_trajs)  
                         assert 'n_comp' in self.sample_fn_kwargs 
 

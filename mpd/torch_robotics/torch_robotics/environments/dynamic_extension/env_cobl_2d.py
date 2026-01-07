@@ -43,7 +43,7 @@ class EnvCobl2D(EnvDynBase):
 
     def __init__(
         self,
-        scenario_idx: int = 0,
+        scenario_idx: int = 296, # isaac gym canont reset when secenario_idx change. 
         eval_dataset_path: Optional[str] = None,
         obstacle_trajectories: Optional[List[np.ndarray]] = None,
         obstacle_radius: float = 0.035,  # Scaled: 0.35m / 10 = 0.035
@@ -117,7 +117,8 @@ class EnvCobl2D(EnvDynBase):
             positions = obs_traj[:, :2]  # [T, 2]
             prim_sphere= MultiSphereField(
                 np.array(
-                    [positions[0]]
+                    # [positions[0]]
+                    [[0.0, 0.0]]
                 ),
                 np.array(
                     [obstacle_radius]
@@ -176,7 +177,11 @@ class EnvCobl2D(EnvDynBase):
         self.scenario_idx = trajectory_configs.get('scenario_idx', 0)
         self.obstacle_trajectories = self.eval_data['obstacle_trajectories'][self.scenario_idx]
         self.ego_trajectory = self.eval_data['ego_trajectories'][self.scenario_idx]  # [80, 2]
-
+        # tmp_res = []
+        # for tj in self.eval_data['obstacle_trajectories'] : 
+        #     tmp_res.append(any([np.isnan(t[0]).any() for t in tj]))
+        # print(f"nan {all(tmp_res)}")
+        # import pdb; pdb.set_trace()
         # update object field
         new_obj_extra = []  # Moving obstacles go here
 
@@ -185,7 +190,7 @@ class EnvCobl2D(EnvDynBase):
             positions = obs_traj[:, :2]  # [T, 2]
             prim_sphere= MultiSphereField(
                 np.array(
-                    [positions[0]]
+                    [[0.0, 0.0]]
                 ),
                 np.array(
                     [self.obstacle_radius]
@@ -203,6 +208,7 @@ class EnvCobl2D(EnvDynBase):
 
             new_obj_extra.append(moving_sphere)
         self.set_obj_extra_list(new_obj_extra)
+        # self.obj_extra_list = new_obj_extra
         self.n_obstacles = len(self.obstacle_trajectories)
         print(f"Updated Scenario {self.scenario_idx=}, {self.n_obstacles=}")
 
@@ -218,8 +224,21 @@ class EnvCobl2D(EnvDynBase):
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 8))
 
-        if time is None:
-            time = 0.0
+        # if time is None:
+        #     time = 0.0
+
+        has_moving = self._has_moving_objects()
+
+        if has_moving:
+            # Use provided time, or default to middle of time range
+            if time is None:
+                time = (self.time_range[0] + self.time_range[1]) / 2.0
+            # Clamp to valid range
+            time = max(self.time_range[0], min(self.time_range[1], time))
+            # Update all moving objects
+            # print("EnvDynBase:",time)
+            self._update_moving_objects_at_time(time)
+
 
         # Render workspace bounds
         x_min, y_min = to_numpy(self.limits[0])
@@ -233,7 +252,7 @@ class EnvCobl2D(EnvDynBase):
         # ax.set_xticklabels([f"{t*10:g}" for t in xticks])
         # yticks = ax.get_yticks()
         # ax.set_yticklabels([f"{t*10:g}" for t in yticks])
-
+        # self._update_moving_objects_at_time(time)
         # Render obstacles at current time
         t_idx = min(int(time / self.dt), self.horizon - 1)
 

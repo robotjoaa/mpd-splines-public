@@ -95,9 +95,9 @@ def experiment(
     extra_objects = True 
     extraobjects_env = "EnvDynSimple2DExtraObjects" # "EnvSimple2DExtraObjectsV00"
     model_selection = "bspline" # "waypoints"
-    trajectory_duration = 4.0
+    trajectory_duration = 10
     num_T_pts = 50
-    n_trajectory_samples = 100 #100
+    n_trajectory_samples = 10 #100
     moving_object_margin_scale = 2.0
     moving_object_gradient_scale = 10.0
 
@@ -246,22 +246,36 @@ def experiment(
         "waypoints" : [23],
     }
     failed_obj_dict = {
+        # 23 : {
+        #     'dyn-simple2d-box': {
+        #         'keyframe_positions': np.array([[ 0.9033574, -0.23202  ,  0.       ],
+        #             [-0.9033574,  0.23202  ,  0.       ]],dtype=np.float32),
+        #         'keyframe_times': np.array([ 0., 10.],dtype=np.float32)},
+        #     'dyn-simple2d-sphere': {
+        #         'keyframe_positions': np.array([[ 0.90552557, -0.22340837,  0.        ],
+        #             [-0.90552557,  0.22340837,  0.        ]], dtype=np.float32),
+        #         'keyframe_times': np.array([ 0., 10.], dtype=np.float32)}
+        # }
         23 : {
             'dyn-simple2d-box': {
-                'keyframe_positions': np.array([[ 0.9033574, -0.23202  ,  0.       ],
-                    [-0.9033574,  0.23202  ,  0.       ]],dtype=np.float32),
-                'keyframe_times': np.array([ 0., 10.],dtype=np.float32)},
+                'keyframe_positions': np.array([[ 0.9033574, -0.23202  ,  0.       ], 
+                    [0.0,0.0,0.0],    
+                    [0.7559365630149841, 0.2886315882205963, 0.0]],dtype=np.float32),
+                'keyframe_times': np.array([ 0.,5., 10.],dtype=np.float32)},
             'dyn-simple2d-sphere': {
-                'keyframe_positions': np.array([[ 0.90552557, -0.22340837,  0.        ],
-                    [-0.90552557,  0.22340837,  0.        ]], dtype=np.float32),
-                'keyframe_times': np.array([ 0., 10.], dtype=np.float32)}
+                'keyframe_positions': np.array([[-0.7559365630149841, -0.2886315882205963, 0.0],
+                    [0.0,0.0,0.0],    
+                    [ -0.90552557, 0.22340837,  0.        ]], dtype=np.float32),
+                'keyframe_times': np.array([ 0.,5., 10.], dtype=np.float32)}
         }
     }
     # should be index
-    failed_time_dict = {
-        23 : #np.array([35/128 , 64/128]) * args_inference.trajectory_duration
-            np.array([35, 64])
-    }
+    failed_time_dict = None 
+    # failed_time_dict = {
+    #     23 : #np.array([35/128 , 64/128]) * args_inference.trajectory_duration
+    #         np.array([35, 64])
+    #}
+    
     failed_idx = failed_dict[args_inference.model_selection]
     debug_failed = True
     for idx_sg, sample_id in enumerate(failed_idx):
@@ -273,9 +287,9 @@ def experiment(
         results_single_plan = DotMap(t_generator=0.0, t_guide=0.0)
 
         q_pos_start = to_torch([-0.7684, -0.9165], **tensor_args)
-        q_pos_goal = to_torch([0.4,  -0.25],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
-        ee_pose_goal = to_torch([[ 1.0000,  0.0000,  0.0000, 0.4],
-                                [ 0.0000,  1.0000,  0.0000,  -0.25],
+        q_pos_goal = to_torch([-0.8922,  0.9447], **tensor_args) #to_torch([0.4,  -0.25],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
+        ee_pose_goal = to_torch([[ 1.0000,  0.0000,  0.0000, q_pos_goal[0]],
+                                [ 0.0000,  1.0000,  0.0000, q_pos_goal[1]],
                                 [ 0.0000,  0.0000,  1.0000,  0.0000]],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
         # q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
 
@@ -297,10 +311,11 @@ def experiment(
 
         if debug_failed and sample_id in failed_idx : 
             map_config = failed_obj_dict[sample_id]
+        # import pdb; pdb.set_trace()
         
         results_single_plan = generative_optimization_planner.plan_trajectory(
             q_pos_start, q_pos_goal, ee_pose_goal, results_ns=results_single_plan, debug=debug, 
-            debug_failed=debug_failed, map_config = map_config
+            debug_failed=debug_failed, map_config = map_config, is_hard = 
         )
     
         print(f"...inference finished.")
@@ -391,7 +406,7 @@ def experiment(
         ############################################################################################################
         # Render sampling results
         render_time = None 
-        if failed_dict is not None : 
+        if failed_dict is not None and failed_time_dict is not None : 
             render_time = failed_time_dict[sample_id] if sample_id in failed_idx else None
 
         render_results(

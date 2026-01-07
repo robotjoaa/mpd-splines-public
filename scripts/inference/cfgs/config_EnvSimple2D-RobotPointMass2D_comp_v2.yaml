@@ -1,0 +1,172 @@
+# end true progress true
+# model_dir_ddpm_bspline: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-06_06-29-32/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryBspline/guide_mode___cfg/len_ovlp_cd___6/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.5/0/'
+# end true progress true ovlp 8
+# model_dir_ddpm_bspline: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-06_07-32-52/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryBspline/guide_mode___cfg/len_ovlp_cd___8/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.5/0/'
+
+# 12-07 1/0.5
+# model_dir_ddpm_bspline: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-07_09-54-53/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryBspline/guide_mode___cfg/len_ovlp_cd___8/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.5/0/'
+# 1.4/0.5
+model_dir_ddpm_bspline: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-07_09-55-04/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryBspline/guide_mode___cfg/len_ovlp_cd___8/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.4/lambda_g___0.5/0/'
+# 1/0.7
+# model_dir_ddpm_bspline: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-07_09-55-13/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryBspline/guide_mode___cfg/len_ovlp_cd___8/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.7/0/'
+
+model_dir_cvae_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/data_trained_models/launch_train_cvae_models-v04_2024-09-17_21-46-47/generative_model_class___CVAEModel/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0'
+
+# end true progress true
+model_dir_ddpm_waypoints: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-06_06-30-16/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryWaypoints/guide_mode___cfg/len_ovlp_cd___6/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.5/0/'
+# end true progress true ovlp 8
+# model_dir_ddpm_waypoints: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-06_07-27-19/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryWaypoints/guide_mode___cfg/len_ovlp_cd___8/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.5/0/'
+
+# end true progress false
+# model_dir_ddpm_waypoints: "/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-06_07-24-31/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryWaypoints/guide_mode___cfg/len_ovlp_cd___6/use_end_ovlp_model___True/context_progress___False/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.5/0/"
+
+# 12-07 1/0.5
+# model_dir_ddpm_waypoints: "/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-07_09-52-50/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryWaypoints/guide_mode___cfg/len_ovlp_cd___8/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.5/0/"
+# 1.4 / 0.5
+# model_dir_ddpm_waypoints: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-07_09-53-42/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryWaypoints/guide_mode___cfg/len_ovlp_cd___8/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.4/lambda_g___0.5/0/'
+
+# 12-07 g/l 1.0/0.7
+# model_dir_ddpm_waypoints: '/home/sisrel/pjw/mpd-splines-public/data_trained_models/launch_train_comp_diffusion_models-EnvSimple2D_v2_2025-12-07_09-54-18/generative_model_class___CompDiffusionModelv2/dataset_subdir___EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled_comp_segments.hdf5/context_qs___False/context_ee_goal_pose___False/unet_input_dim___32/unet_dim_mults_option___0/context_q_out_dim___32/context_ee_goal_pose_out_dim___32/context_combined_out_dim___32/bspline_num_control_points_desired___28/parametric_trajectory_class___ParametricTrajectoryWaypoints/guide_mode___cfg/len_ovlp_cd___8/use_end_ovlp_model___True/context_progress___True/global_context_qs___True/global_context_ee_goal_pose___False/condition_guidance_l___1.5/condition_guidance_g___0.5/lambda_l___1.0/lambda_g___0.7/0/'
+
+
+model_selection: 'bspline'  # 'bspline', 'waypoints'
+
+#######################################################################################################################
+# minimum distance between start and goal configurations np.sqrt(2*1**2)=1.4
+min_distance_q_pos_start_goal: 1.4
+
+# environment options
+env_id_replace: null
+is_hard: false
+# env_id_replace: 'EnvSimple2DExtraObjectsV00'
+grasped_object: null
+
+# collision avoidance/checking options
+# extra margin for object collision cost (sdf is clamped if it is greater than this value)
+# 0.02 for 2D tasks, 0.05 for panda tasks
+obstacle_cutoff_margin_extra: 0.02
+# Points whose distance to the objects is less than this margin are considered in collision
+margin_for_dense_collision_checking:  0.0
+# evaluation path
+eval_dataset_path: '/home/sisrel/pjw/mpd-splines-public/data_trajectories/EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/problem_configs.json'
+#######################################################################################################################
+# task options
+
+num_T_pts: 128  # number of time points in the trajectory (> 128 for smoother results)
+trajectory_duration: 10.0  # seconds
+phase_time_class: 'PhaseTimeLinear'  # PhaseTimeLinear, PhaseTimeSigmoid
+#phase_time_class: 'PhaseTimeSigmoid'  # PhaseTimeLinear, PhaseTimeSigmoid
+
+project_gradient_hierarchy: false  # project the gradients hierarchically
+
+# if project_gradient_hierarchy is true, the cost/gradient hierarchy is defined from top to bottom
+# costs:
+#   CostTaskSpaceCollisionObjects:
+#     weight: 10.0
+#     use_only_on_extra_objects: false
+#   CostJointSpaceJointLimits:
+#     weight: 1.0
+#   CostJointSpaceVelocity:
+#     weight: 0.2
+#   CostJointSpaceAcceleration:
+#     weight: 0.02
+
+costs:
+  CostTaskSpaceCollisionObjects:
+    weight: 10.0
+    use_only_on_extra_objects: false
+  CostJointSpaceJointLimits:
+    weight: 1.0
+  CostJointSpaceVelocity:
+    weight: 0.1
+  CostJointSpaceAcceleration:
+    weight: 0.01
+
+# margin, gradient scales 
+moving_object_margin_scale: 5
+moving_object_gradient_scale: 2
+
+n_trajectory_samples: 100  # batch size for sampling
+
+best_trajectory_selection: 'shortest_path_length'
+
+#######################################################################################################################
+# Planner options
+
+planner_alg: 'diffusion_prior'  # diffusion_prior, diffusion_prior_then_guide, mpd, gp_prior_then_guide, knn_prior_then_guide, cvae, cvae_prior_then_guide, rrtconnect_then_guide
+
+diffusion_sampling_method: 'ddim'  # ddim, ddpm (not tuned)
+
+compute_costs_with_xrecon: false
+
+n_diffusion_steps_without_noise: 0
+
+extra_mp_steps: 0  # number of extra motion planning gradient steps
+
+## comp options
+
+comp: 
+  n_comp: 3
+  len_ovlp_cd: 4
+  guide_mode: "cfg"
+  use_end_ovlp_model: True
+  context_progress: True
+  global_context_qs: True
+  global_context_ee_goal_pose: False
+  condition_guidance_g: 0.5
+  condition_guidance_l: 1.5
+  lambda_g: 0.5
+  lambda_l: 1.0
+  do_cond : True
+  blend_type : "exponential"
+  blend_beta : 3
+  
+# ddim options
+ddim:
+  t_start_guide_steps_fraction: 0.3
+  ddim_sampling_timesteps: 15
+  ddim_eta: 0.5  # 0.0 for ddim, 1.0 for ddpm
+  ddim_skip_type: 'quadratic'  # 'uniform', 'quadratic', 'exponential'
+  ddim_scale_grad_prior: 0.25 # 0.25
+  n_guide_steps: 4
+  guide_lr: 1 #1.0
+  max_perturb_x: 0.15  # maximum perturbation from the diffusion mean during guide steps
+  clip_grad: true
+  clip_grad_rule: 'norm'  # 'norm', 'value'
+  max_grad_norm: 1.  # clip the norm of the control point gradients
+  max_grad_value: 1.  # clip the control point gradients
+
+# diffusion_prior_then_guide options
+diffusion_prior_then_guide:  &repl
+  n_guide_steps: 12  # the same number of guide steps as used in MPD with DDIM
+  guide_lr: 0.01
+  max_perturb_x: 0.15  # maximum perturbation from the diffusion mean during guide steps
+  clip_grad: true
+  clip_grad_rule: 'value'  # 'norm', 'value'
+  max_grad_norm: 1.  # clip the norm of the control point gradients
+  max_grad_value: 1.  # clip the control point gradients
+
+# ddpm options
+ddpm:
+  t_start_guide_steps_fraction: 0.2
+  prior_weight_with_guide: 0.95
+  noise_std: 0.7
+  n_guide_steps: 2
+  guide_lr: 0.1
+  max_perturb_x: 0.15  # maximum perturbation from the diffusion mean during guide steps
+  clip_grad: true
+  clip_grad_rule: 'value'  # 'norm', 'value'
+  max_grad_norm: 1.  # clip the norm of the control point gradients
+  max_grad_value: 1.  # clip the control point gradients
+
+gp_prior_then_guide:
+  <<: *repl
+
+knn_prior_then_guide:
+  <<: *repl
+
+cvae_prior_then_guide:
+  <<: *repl
+
+rrtconnect_then_guide:
+  <<: *repl

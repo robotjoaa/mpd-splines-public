@@ -19,7 +19,7 @@ from torch_robotics.torch_utils.torch_utils import to_numpy, DEFAULT_TENSOR_ARGS
 from torch_robotics.trajectory.utils import interpolate_traj_via_points
 from torch_robotics.visualizers.configuration_free_space import plot_configuration_free_space
 from torch_robotics.visualizers.plot_utils import create_fig_and_axes, create_animation_video, plot_multiline
-
+import pdb
 
 class Task(ABC):
 
@@ -305,6 +305,7 @@ class PlanningTask(Task):
 
             # Object collision
             if self.df_collision_objects is not None:
+                # pdb.set_trace()
                 cost_collision_objects = self.df_collision_objects.compute_cost(
                     q_pos, fk_collision_pos, field_type=field_type, **kwargs
                 )
@@ -346,15 +347,27 @@ class PlanningTask(Task):
             trajs_interpolated = interpolate_traj_via_points(trajs_new, num_interpolation=num_interpolation)
         else:
             trajs_interpolated = trajs_new
+
+        # For dynamic environments, align timesteps with the interpolated horizon
+        timesteps_arg = kwargs.pop("timesteps", None)
+        if timesteps_arg is None and hasattr(self, "_get_timesteps_for_horizon"):
+            try:
+                timesteps_arg = self._get_timesteps_for_horizon(horizon_size=trajs_interpolated.shape[1])
+            except Exception:
+                timesteps_arg = None
+
         # Set a low margin for collision checking, which means we allow trajectories to pass very close to objects.
         # While the optimized trajectory via points are not at a 0 margin from the object, the interpolated via points
         # might be. A 0 margin guarantees that we do not discard those trajectories, while ensuring they are not in
         # collision (margin < 0).
         # import pdb; pdb.set_trace()
         trajs_waypoints_collisions = self.compute_collision(
-            trajs_interpolated, margin=self.margin_for_dense_collision_checking, **kwargs
+            trajs_interpolated,
+            margin=self.margin_for_dense_collision_checking,
+            timesteps=timesteps_arg,
+            **kwargs,
         )
-        #print(trajs_waypoints_collisions)
+        # print(f"get_trajs_unvalid and valid, {trajs_waypoints_collisions=}")
         if isinstance(trajs_waypoints_collisions,int) and trajs_waypoints_collisions == 0 : 
             if q_trajs.ndim == 4 : 
                 Ns = q_trajs.shape[0]
@@ -445,8 +458,15 @@ class PlanningTask(Task):
         if trajs_valid.nelement() == 0:
             trajs_valid = None
 
+        # Move collision mask to CPU to avoid holding large GPU buffers after the checks
+        if torch.is_tensor(trajs_waypoints_collisions) and trajs_waypoints_collisions.is_cuda:
+            trajs_waypoints_collisions = trajs_waypoints_collisions.cpu()
+
+        # print("get_trajs_unvalid_and_valid finished")
+
         if return_indices:
             return trajs_unvalid, trajs_unvalid_idxs, trajs_valid, trajs_valid_idxs, trajs_waypoints_collisions
+        
         return trajs_unvalid, trajs_valid
 
     def compute_fraction_valid_trajs(self, q_trajs, **kwargs):

@@ -154,6 +154,7 @@ class EnvDynSimple2DExtraObjects(EnvDynBase):
         # Initialize EnvDynBase wrapper with the base environment's configuration
         # and add moving objects to obj_extra_list
         super().__init__(
+            # env=base_env,
             limits=base_env.limits,
             obj_fixed_list=base_env.obj_fixed_list,  # Static obstacles from EnvSimple2D
             obj_extra_list=[moving_sphere, moving_box],  # MovingObjectField instances
@@ -197,7 +198,7 @@ class EnvDynSimple2DExtraObjects(EnvDynBase):
             tensor_args=tensor_args
         )
 
-    def configure_moving_objects_from_start_goal(self, q_start, q_goal, trajectory_duration=None):
+    def configure_moving_objects_from_start_goal(self, q_start, q_goal, trajectory_duration=None, is_hard=False):
         """
         Configure moving object trajectories based on robot start and goal positions.
 
@@ -236,58 +237,137 @@ class EnvDynSimple2DExtraObjects(EnvDynBase):
         # sphere_end = -perp_direction * offset
         # box_start = -perp_direction * offset
         # box_end = perp_direction * offset
-
-        theta = np.random.uniform(-1, 1, 2)
         offset = 0.5 * np.linalg.norm(q_goal - q_start)
-        dir_sphere = np.array([np.cos(theta[0]), np.sin(theta[0])])
-        dir_box = np.array([np.cos(theta[1]), np.sin(theta[1])])
-        sphere_start = dir_sphere * offset
-        sphere_end = -dir_sphere * offset
-        box_start = dir_box * offset
-        box_end = -dir_box * offset
+        if offset < 1e-6:
+            offset = 0.5
 
-        # Update trajectories
-        trajectory_configs = {
-            "dyn-simple2d-sphere": LinearTrajectory(
-                keyframe_times=[self.time_range[0], self.time_range[1]],
-                keyframe_positions=[
-                    [sphere_start[0], sphere_start[1], 0.0],
-                    [sphere_end[0], sphere_end[1], 0.0]
-                ],
-                tensor_args=self.tensor_args
-            ),
-            "dyn-simple2d-box": LinearTrajectory(
-                keyframe_times=[self.time_range[0], self.time_range[1]],
-                keyframe_positions=[
-                    [box_start[0], box_start[1], 0.0],
-                    [box_end[0], box_end[1], 0.0]
-                ],
-                tensor_args=self.tensor_args
-            )
-        }
-
-        result = self.update_all_moving_object_trajectories(trajectory_configs)
-        assert result['dyn-simple2d-sphere'] and result['dyn-simple2d-sphere']
-
-        # save as numpy
-        trajectory_configs_dict = {
-            "dyn-simple2d-sphere":{
-                "keyframe_times" : to_numpy([self.time_range[0], self.time_range[1]]),
-                "keyframe_positions" : to_numpy(
-                    [
+        if not is_hard : 
+            theta = np.random.uniform(-1, 1, 2)
+            dir_sphere = np.array([np.cos(theta[0]), np.sin(theta[0])])
+            dir_box = np.array([np.cos(theta[1]), np.sin(theta[1])])
+            sphere_start = dir_sphere * offset
+            sphere_end = -dir_sphere * offset
+            box_start = dir_box * offset
+            box_end = -dir_box * offset
+            
+            # Update trajectories
+            trajectory_configs = {
+                "dyn-simple2d-sphere": LinearTrajectory(
+                    keyframe_times=[self.time_range[0], self.time_range[1]],
+                    keyframe_positions=[
                         [sphere_start[0], sphere_start[1], 0.0],
                         [sphere_end[0], sphere_end[1], 0.0]
-                    ])
-            },
-            "dyn-simple2d-box" :{
-                "keyframe_times" : to_numpy([self.time_range[0], self.time_range[1]]),
-                "keyframe_positions" : to_numpy(
-                    [
+                    ],
+                    tensor_args=self.tensor_args
+                ),
+                "dyn-simple2d-box": LinearTrajectory(
+                    keyframe_times=[self.time_range[0], self.time_range[1]],
+                    keyframe_positions=[
                         [box_start[0], box_start[1], 0.0],
                         [box_end[0], box_end[1], 0.0]
-                    ])
-            },
-        }
+                    ],
+                    tensor_args=self.tensor_args
+                )
+            }
+
+            result = self.update_all_moving_object_trajectories(trajectory_configs)
+            assert result['dyn-simple2d-sphere'] and result['dyn-simple2d-box']
+
+            # save as numpy
+            trajectory_configs_dict = {
+                "dyn-simple2d-sphere":{
+                    "keyframe_times" : to_numpy([self.time_range[0], self.time_range[1]]),
+                    "keyframe_positions" : to_numpy(
+                        [
+                            [sphere_start[0], sphere_start[1], 0.0],
+                            [sphere_end[0], sphere_end[1], 0.0]
+                        ])
+                },
+                "dyn-simple2d-box" :{
+                    "keyframe_times" : to_numpy([self.time_range[0], self.time_range[1]]),
+                    "keyframe_positions" : to_numpy(
+                        [
+                            [box_start[0], box_start[1], 0.0],
+                            [box_end[0], box_end[1], 0.0]
+                        ])
+                },
+            }
+        else : ## hard : three keyframes with a hard turn and congested center
+            t_start, t_end = self.time_range
+
+            def sample_turning_waypoints():
+                base_angle = np.random.uniform(-np.pi, np.pi)
+                # Force a turn larger than 60deg by sampling from disjoint ranges.
+                if np.random.rand() < 0.5:
+                    turn_angle = np.random.uniform(-np.pi, -np.pi / 3)
+                else:
+                    turn_angle = np.random.uniform(np.pi / 3, np.pi)
+                dir_start = np.array([np.cos(base_angle), np.sin(base_angle)])
+                dir_turn = np.array([np.cos(base_angle + turn_angle), np.sin(base_angle + turn_angle)])
+                mid_radius = offset * np.random.uniform(0.2, 0.6)  # pull midpoint toward center to congest origin
+                start = dir_start * offset
+                mid = dir_turn * mid_radius
+                end = -dir_start * offset
+                return start, mid, end
+
+            sphere_start, sphere_mid, sphere_end = sample_turning_waypoints()
+            box_start, box_mid, box_end = sample_turning_waypoints()
+
+            # Allocate mid-time to roughly match segment lengths (keeps speeds similar) while clamping to [30%, 70%]
+            seg1_len = np.linalg.norm(sphere_mid - sphere_start)
+            seg2_len = np.linalg.norm(sphere_end - sphere_mid)
+            total_len = seg1_len + seg2_len + 1e-8
+            frac_mid = np.clip(seg1_len / total_len, 0.3, 0.7)
+            t_mid = t_start + frac_mid * (t_end - t_start)
+
+            trajectory_configs = {
+                "dyn-simple2d-sphere": LinearTrajectory(
+                    keyframe_times=[t_start, t_mid, t_end],
+                    keyframe_positions=[
+                        [sphere_start[0], sphere_start[1], 0.0],
+                        [sphere_mid[0], sphere_mid[1], 0.0],
+                        [sphere_end[0], sphere_end[1], 0.0],
+                    ],
+                    tensor_args=self.tensor_args,
+                ),
+                "dyn-simple2d-box": LinearTrajectory(
+                    keyframe_times=[t_start, t_mid, t_end],
+                    keyframe_positions=[
+                        [box_start[0], box_start[1], 0.0],
+                        [box_mid[0], box_mid[1], 0.0],
+                        [box_end[0], box_end[1], 0.0],
+                    ],
+                    tensor_args=self.tensor_args,
+                ),
+            }
+
+            result = self.update_all_moving_object_trajectories(trajectory_configs)
+            assert result['dyn-simple2d-sphere'] and result['dyn-simple2d-box']
+
+            trajectory_configs_dict = {
+                "dyn-simple2d-sphere": {
+                    "keyframe_times": to_numpy([t_start, t_mid, t_end]),
+                    "keyframe_positions": to_numpy(
+                        [
+                            [sphere_start[0], sphere_start[1], 0.0],
+                            [sphere_mid[0], sphere_mid[1], 0.0],
+                            [sphere_end[0], sphere_end[1], 0.0],
+                        ]
+                    ),
+                },
+                "dyn-simple2d-box": {
+                    "keyframe_times": to_numpy([t_start, t_mid, t_end]),
+                    "keyframe_positions": to_numpy(
+                        [
+                            [box_start[0], box_start[1], 0.0],
+                            [box_mid[0], box_mid[1], 0.0],
+                            [box_end[0], box_end[1], 0.0],
+                        ]
+                    ),
+                },
+            }
+
+
 
         return trajectory_configs_dict
     

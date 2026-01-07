@@ -77,9 +77,9 @@ project_gradient_hierarchy_l = [
 
 
 trajectory_duration = 8.0
-n_trajectory_samples = 10 #100
+n_trajectory_samples = 20 #100
 
-n_start_goal_states = 4 #100
+n_start_goal_states = 100 #100
 
 default_options = OrderedDict(
     save_results_single_plan_low_memory=True,
@@ -89,9 +89,9 @@ default_options = OrderedDict(
     render_env_robot_trajectories=True,
     render_pybullet=False,
     draw_collision_spheres=False,
-    run_evaluation_issac_gym=False,
-    render_isaacgym_viewer=False,
-    render_isaacgym_movie=False,
+    run_evaluation_issac_gym=True,
+    render_isaacgym_viewer=True,
+    render_isaacgym_movie=True,
 )
 
 # remove and create a new tmp
@@ -183,7 +183,7 @@ exp_id = 0
 
 model_selection_l = [
     "bspline",
-    #"waypoints",
+    # "waypoints",
 ]
 
 planner_alg_l = [

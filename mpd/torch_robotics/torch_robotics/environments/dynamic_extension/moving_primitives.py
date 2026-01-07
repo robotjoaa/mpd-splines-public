@@ -11,7 +11,7 @@ from typing import List, Callable, Optional
 from torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
 from .trajectory import TrajectoryInterpolator, LinearTrajectory, WaypointTrajectory
-
+import pdb
 class MovingObjectField(ObjectField):
     """
     An ObjectField that moves over time according to a trajectory.
@@ -55,8 +55,38 @@ class MovingObjectField(ObjectField):
             t: Time value
         """
         self.current_time = t
-        pos, ori = self.trajectory(t)
+        state_tuple = self.trajectory(t, get_state=("pos", "ori", "vel"))  # vel used for NaN handling
+        pos, ori, vel = state_tuple
+        pos, ori = self._sanitize_pose(pos, ori, vel)
+        # print("update_pose_at_time: ",t, pos)
         self.set_position_orientation(pos=pos, ori=ori)
+
+    @staticmethod
+    def _sanitize_pose(pos, ori, vel=None):
+        """
+        If position/orientation contain NaNs, push object far away along velocity direction (or +X fallback)
+        and reset orientation to identity.
+        """
+        pos_invalid = (pos is None) or (not torch.is_tensor(pos)) or torch.isnan(pos).any() or torch.isinf(pos).any()
+        if pos_invalid:
+            if vel is not None and torch.is_tensor(vel) and torch.isfinite(vel).all():
+                direction = vel
+            else:
+                direction = torch.zeros_like(pos) if torch.is_tensor(pos) else torch.tensor([0.0, 0.0, 0.0])
+                direction[..., 0] = 1.0  # default +X
+            norm = torch.linalg.norm(direction)
+            if norm < 1e-6:
+                direction = torch.zeros_like(direction)
+                direction[..., 0] = 1.0
+                norm = 1.0
+            pos = direction / norm * 1e6
+
+        ori_invalid = (ori is None) or (not torch.is_tensor(ori)) or torch.isnan(ori).any() or torch.isinf(ori).any()
+        if ori_invalid:
+            eye = torch.eye(3, device=pos.device if torch.is_tensor(pos) else None, dtype=pos.dtype if torch.is_tensor(pos) else None)
+            ori = eye
+
+        return pos, ori
 
     def compute_signed_distance(self, x, get_gradient=False, timesteps=None, **kwargs):
         """
@@ -165,6 +195,7 @@ class MovingObjectField(ObjectField):
         field_results = []
         can_vectorize_all = True
         #print(self.fields)
+        # pdb.set_trace()
         for primitive in self.fields:
             # Check for sphere with linear trajectory
             if isinstance(primitive, MultiSphereField) and isinstance(self.trajectory, (LinearTrajectory, WaypointTrajectory)):
@@ -217,7 +248,10 @@ class MovingObjectField(ObjectField):
 
             # Replace NaN with infinity so they're not selected as minimum
             # This handles obstacles that appear/disappear mid-trajectory
-            sdfs_masked = torch.where(torch.isnan(sdfs_stacked), torch.inf, sdfs_stacked)
+            nan_mask = torch.isnan(sdfs_stacked)
+            sdfs_masked = torch.where(nan_mask, torch.inf, sdfs_stacked)
+            # Zero out gradients for NaN entries so they can't propagate when no obstacle is active
+            grads_masked = torch.where(nan_mask.unsqueeze(-1), torch.zeros_like(grads_stacked), grads_stacked)
 
             # Find minimum SDF and corresponding index
             sdf_min, min_idx = torch.min(sdfs_masked, dim=0)
@@ -230,7 +264,9 @@ class MovingObjectField(ObjectField):
                 min_idx_expanded = min_idx_expanded.unsqueeze(-1)
             min_idx_expanded = min_idx_expanded.expand(*min_idx.shape, grads_stacked.shape[-1])
 
-            grad_min = torch.gather(grads_stacked, 0, min_idx_expanded.unsqueeze(0)).squeeze(0)
+            gathered_grad = torch.gather(grads_masked, 0, min_idx_expanded.unsqueeze(0)).squeeze(0)
+            # If all SDFs were inf (due to NaNs), treat gradient as zero to ignore collision field
+            grad_min = torch.where(torch.isfinite(sdf_min).unsqueeze(-1), gathered_grad, torch.zeros_like(gathered_grad))
             #print(f"{sdf_min.shape=}, {grad_min.shape=}")
             return sdf_min, grad_min
         else:
@@ -255,15 +291,14 @@ class MovingObjectField(ObjectField):
         x_flat = x.reshape(-1, x.shape[-1])
 
         if isinstance(self.trajectory, LinearTrajectory) : 
-            # Get trajectory velocity (pos(t) = start + velocity * t)
-            if not hasattr(self.trajectory, 'get_velocity'):
-                return None  # Can't vectorize without velocity info
-
-            velocity = self.trajectory.get_velocity()  # Shape: (3,)
-            start_pos = self.trajectory.get_start_position()  # Shape: (3,)
-
-            # Compute time-varying translation: (N, 3)
-            translation_t = start_pos.unsqueeze(0) + velocity.unsqueeze(0) * timesteps_flat.unsqueeze(-1)
+            (pos_at_t,) = self.trajectory(timesteps_flat, get_state=("pos",))  # Shape: (N, 3)
+            # Guard against unexpected extra dims (e.g., appended orientation/vel)
+            if pos_at_t.shape[-1] > 3:
+                pos_at_t = pos_at_t[..., :3]
+            if pos_at_t.shape[-1] == 2:
+                pos_at_t_3d = torch.cat([pos_at_t, torch.zeros(pos_at_t.shape[0], 1, **self.tensor_args)], dim=-1)
+            else:
+                pos_at_t_3d = pos_at_t
 
             # Sphere centers in world frame at each timestep: (N, num_spheres, 3)
             # Account for 2D/3D mismatch
@@ -275,8 +310,10 @@ class MovingObjectField(ObjectField):
                 centers_3d = centers
 
             # Transform centers by trajectory
-            centers_at_t = centers_3d.unsqueeze(0) + translation_t.unsqueeze(1)  # (N, num_spheres, 3)
-        
+            centers_at_t = centers_3d.unsqueeze(0) + pos_at_t_3d.unsqueeze(1)  # (N, num_spheres, 3)
+            # print(f"{centers_at_t=}")
+            # import pdb; pdb.set_trace()
+
         elif isinstance(self.trajectory, WaypointTrajectory) :
             centers = sphere_field.centers  # Shape: (num_spheres, 2 or 3)
             if centers.shape[-1] == 2:
@@ -285,24 +322,21 @@ class MovingObjectField(ObjectField):
             else:
                 centers_3d = centers
             #print(f"{centers_3d.shape=}")
-            # Compute time-varying translation: (N, 3)
-            start_pos = self.trajectory.get_start_position()  # Shape: [2]
-            pos_at_t = self.trajectory.get_positions(timesteps_flat)  # Shape: [N, 1, 2] where N=batch_size
-            # Squeeze out the obstacle dimension (n_obstacles=1 always)
-            pos_at_t = pos_at_t.squeeze(1)  # Shape: [N, 2]
-            #print(pos_at_t.shape)
-            translation_t = pos_at_t - start_pos.unsqueeze(0)  # Shape: [N, 2]
-            pos_at_t_3d = torch.cat([pos_at_t, torch.zeros(*pos_at_t.shape[:-1], 1, **self.tensor_args)], dim=-1)
-            if translation_t.shape[-1] == 2:
-                # Pad to 3D: [N, 2] -> [N, 3]
-                translation_t_3d = torch.cat([translation_t, torch.zeros(*translation_t.shape[:-1], 1, **self.tensor_args)], dim=-1)
+            (pos_at_t,) = self.trajectory(timesteps_flat, get_state=("pos",))
+            # print(f"{pos_at_t.shape=}")
+            if pos_at_t.shape[-1] > 3:
+                pos_at_t = pos_at_t[..., :3]
+            if pos_at_t.ndim > 2:  # squeeze obstacle dimension if present
+                pos_at_t = pos_at_t.squeeze(1)
+            if pos_at_t.shape[-1] == 2:
+                pos_at_t_3d = torch.cat([pos_at_t, torch.zeros(*pos_at_t.shape[:-1], 1, **self.tensor_args)], dim=-1)
             else:
-                translation_t_3d = translation_t
-            #print(f"{translation_t_3d.shape=}")
+                pos_at_t_3d = pos_at_t
+            # print(f"{pos_at_t_3d.shape=}")
             # Reshape for broadcasting: [N, 3] -> [N, 1, 3] to match centers_3d.unsqueeze(0): [1, num_spheres, 3]
             # Result: [N, num_spheres, 3]
-            centers_at_t = centers_3d.unsqueeze(0) + translation_t_3d.unsqueeze(1)
-
+            centers_at_t = centers_3d.unsqueeze(0) + pos_at_t_3d.unsqueeze(1)
+            
             # Debug: Check if centers are at origin and if NaN is causing allclose to fail
             # For COBL: centers should be [0,0,0] so centers_at_t should equal pos_at_t_3d
             # Note: torch.allclose returns False if ANY value is NaN (NaN != NaN)
@@ -369,15 +403,15 @@ class MovingObjectField(ObjectField):
         timesteps_flat = timesteps.flatten()
         x_flat = x.reshape(-1, x.shape[-1])
 
-        # Get trajectory velocity
-        if not hasattr(self.trajectory, 'get_velocity'):
-            return None  # Can't vectorize without velocity info
-
-        velocity = self.trajectory.get_velocity()  # Shape: (3,)
-        start_pos = self.trajectory.get_start_position()  # Shape: (3,)
-
-        # Compute time-varying translation: (N, 3)
-        translation_t = start_pos.unsqueeze(0) + velocity.unsqueeze(0) * timesteps_flat.unsqueeze(-1)
+        # Compute time-varying position directly from the trajectory to handle
+        # multi-segment linear motion.
+        (pos_at_t,) = self.trajectory(timesteps_flat, get_state=("pos",))  # Shape: (N, 3)
+        if pos_at_t.shape[-1] > 3:
+            pos_at_t = pos_at_t[..., :3]
+        if pos_at_t.shape[-1] == 2:
+            pos_at_t_3d = torch.cat([pos_at_t, torch.zeros(pos_at_t.shape[0], 1, **self.tensor_args)], dim=-1)
+        else:
+            pos_at_t_3d = pos_at_t
 
         # Box centers in world frame at each timestep: (N, num_boxes, 3)
         centers = box_field.centers  # Shape: (num_boxes, 2 or 3)
@@ -388,7 +422,7 @@ class MovingObjectField(ObjectField):
             centers_3d = centers
 
         # Transform centers by trajectory: (N, num_boxes, 3)
-        centers_at_t = centers_3d.unsqueeze(0) + translation_t.unsqueeze(1)
+        centers_at_t = centers_3d.unsqueeze(0) + pos_at_t_3d.unsqueeze(1)
 
         # Prepare query points
         if x_flat.shape[-1] == 2:

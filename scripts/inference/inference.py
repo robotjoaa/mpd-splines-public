@@ -67,8 +67,8 @@ def experiment(
     debug: bool = False,
     ########################################################################
     # MANDATORY
-    # seed: int = int(time.time()),
-    seed: int = 2,
+    seed: int = int(time.time()),
+    # seed: int = 2,
     results_dir: str = "logs",
     ########################################################################
     **kwargs,
@@ -198,7 +198,10 @@ def experiment(
         idx_sample_l = np.random.choice(np.arange(len(val_subset)), n_start_goal_states)
     else : # test
         eval_len = loaded_map['n_scenarios']
-        idx_sample_l = np.random.choice(np.arange(int(eval_len)), n_start_goal_states)
+        if n_start_goal_states == int(eval_len) : 
+            idx_sample_l = np.arange(int(eval_len))
+        else : 
+            idx_sample_l = np.random.choice(np.arange(int(eval_len)), n_start_goal_states)
 
     # reproduce failed index
     # failed_dict = {
@@ -209,32 +212,59 @@ def experiment(
     #     "bspline" : [18, 20, 29, 42],
     #     "waypoints" : [18, 20, 29, 42],
     # }
-    failed_dict = {
-        "bspline" : [23],
-        "waypoints" : [23],
+    # failed_dict = {
+    #     "bspline" : [11, 39, 51, 54, 65, 79],
+    #     "waypoints" : [11, 39, 51, 54, 65, 79],
+    # }
+    # failed_dict={
+    #     'bspline' : [6, 32], #42, 82, 84],
+    #     'waypoints' : [6, 32], #42, 82, 84]
+    # }
+
+    # simple hard
+    # failed_dict={
+    #     # 'bspline' : [6, 32, 40, 42, 44, 82, 84, 90, 91],
+    #     'bspline' : [40, 82],
+    #     'waypoints' : [6, 32, 40, 42, 44, 82, 84, 90, 91],
+    # }
+
+    # static hard
+    # failed_dict={
+    #     'bspline' : [5, 26, 36, 51, 66, 90],
+    #     'waypoints' : [90], #[5, 26, 36, 51, 66, 90],
+    # }
+
+    # cobl hard
+    failed_dict={
+        'bspline' : [7, 13, 28],
+        'waypoints' : [7, 13, 28],
     }
-    failed_obj_dict = {
-        23 : {
-            'dyn-simple2d-box': {
-                'keyframe_positions': np.array([[ 0.9033574, -0.23202  ,  0.       ],
-                    [-0.9033574,  0.23202  ,  0.       ]],dtype=np.float32),
-                'keyframe_times': np.array([ 0., 10.],dtype=np.float32)},
-            'dyn-simple2d-sphere': {
-                'keyframe_positions': np.array([[ 0.90552557, -0.22340837,  0.        ],
-                    [-0.90552557,  0.22340837,  0.        ]], dtype=np.float32),
-                'keyframe_times': np.array([ 0., 10.], dtype=np.float32)}
-        }
-    }
-    # should be index
-    failed_time_dict = {
-        23 : #np.array([35/128 , 64/128]) * args_inference.trajectory_duration
-            np.array([35, 64])
-    }
-    failed_idx = failed_dict[args_inference.model_selection]
-    debug_failed = False
+
+    debug_failed = True
+    idx_sample_l = [296]#, 23, 56] #, 92, 120, 148, 202, 295]
+    # failed_obj_dict = {
+    #     23 : {
+    #         'dyn-simple2d-box': {
+    #             'keyframe_positions': np.array([[ 0.9033574, -0.23202  ,  0.       ],
+    #                 [-0.9033574,  0.23202  ,  0.       ]],dtype=np.float32),
+    #             'keyframe_times': np.array([ 0., 10.],dtype=np.float32)},
+    #         'dyn-simple2d-sphere': {
+    #             'keyframe_positions': np.array([[ 0.90552557, -0.22340837,  0.        ],
+    #                 [-0.90552557,  0.22340837,  0.        ]], dtype=np.float32),
+    #             'keyframe_times': np.array([ 0., 10.], dtype=np.float32)}
+    #     }
+    # }
+
+    # # should be index
+    # failed_time_dict = {
+    #     23 : #np.array([35/128 , 64/128]) * args_inference.trajectory_duration
+    #         np.array([35, 64])
+    # }
+    # failed_idx = failed_dict[args_inference.model_selection]
+    
     for idx_sg, idx_sample in enumerate(idx_sample_l):
-        if debug_failed and idx_sg not in failed_idx : 
-            continue
+        # if debug_failed and idx_sg not in failed_idx : 
+        #     continue
 
         print(f"\n-------------------------------------------------------------------------------------------------")
         print(f"----------------PLANNING {idx_sg+1}/{n_start_goal_states}------------------")
@@ -250,13 +280,14 @@ def experiment(
                                 [ 0.0000,  1.0000,  0.0000,  problems['q_goal'][1]],
                                 [ 0.0000,  0.0000,  1.0000,  0.0000]],  **tensor_args)
         else : 
-            #q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
+            loaded_map = None
+            q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
 
-            q_pos_start = to_torch([-0.9, -0.9165], **tensor_args)
-            q_pos_goal = to_torch([0.9,  0.9],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
-            ee_pose_goal = to_torch([[ 1.0000,  0.0000,  0.0000, q_pos_goal[0]],
-                                [ 0.0000,  1.0000,  0.0000,  q_pos_goal[1]],
-                                [ 0.0000,  0.0000,  1.0000,  0.0000]],  **tensor_args)
+            # q_pos_start = to_torch([-0.9, -0.9165], **tensor_args)
+            # q_pos_goal = to_torch([0.9,  0.9],  **tensor_args) # torch.Tensor([-0.8922,  0.9447])
+            # ee_pose_goal = to_torch([[ 1.0000,  0.0000,  0.0000, q_pos_goal[0]],
+            #                     [ 0.0000,  1.0000,  0.0000,  q_pos_goal[1]],
+            #                     [ 0.0000,  0.0000,  1.0000,  0.0000]],  **tensor_args)
 
         print("\n----------------START AND GOAL states----------------")
         print(f"q_pos_start: {q_pos_start}")
@@ -273,16 +304,32 @@ def experiment(
         map_config = None
         if loaded_map is not None : 
             #map_config = loaded_map[idx_sg]
-            map_config = {
-                'scenario_idx' : idx_sample
-            }
+            current_map = args_train.get('env_id_replace', None)
+            if 'EnvCobl' in current_map :
+                map_config = {
+                    'scenario_idx' : idx_sample
+                }
+            elif 'EnvSimple2DExtraObjectsV00' == current_map : 
+                map_config = None
+            
+            elif 'Simple2D' in current_map :
+                map_config = loaded_map['problems'][idx_sample]["dyn_obj_config"]
 
-        if debug_failed and idx_sg in failed_idx : 
-            map_config = failed_obj_dict[idx_sg]
+        # if debug_failed and idx_sg in failed_idx : 
+        #     # map_config = failed_obj_dict[idx_sg]
+        #     if 'EnvSimple2DExtraObjectsV00' == current_map : 
+        #         map_config = None
+        #     elif 'EnvCobl' in current_map :
+        #         map_config = {
+        #             'scenario_idx' : failed_obj_dict[idx_sg]
+        #         }
+        #     else :
+        #         map_config = loaded_map['problems'][idx_sample]["dyn_obj_config"]
         
+        is_hard = kwargs.get('is_hard', False)
         results_single_plan = generative_optimization_planner.plan_trajectory(
             q_pos_start, q_pos_goal, ee_pose_goal, results_ns=results_single_plan, debug=debug, 
-            debug_failed=debug_failed, map_config = map_config
+            debug_failed=debug_failed, map_config = map_config, is_hard = is_hard
         )
     
         print(f"...inference finished.")
@@ -317,19 +364,21 @@ def experiment(
             motion_planning_isaac_env.ee_pose_goal = planning_task.robot.get_EE_pose(
                 to_torch(q_pos_goal.unsqueeze(0), device), flatten_pos_quat=True, quat_xyzw=True
             ).squeeze(0)
-
+            print("run_evaluation_isaac_gym")
             # Execute all valid trajectories
             if results_single_plan.q_trajs_pos_valid.shape[0] > 0:
-                q_trajs_pos = results_single_plan.q_trajs_pos_valid.movedim(1, 0)  # horizon, batch, D
+                # q_trajs_pos = results_single_plan.q_trajs_pos_valid.movedim(1, 0)
+                # q_trajs_pos = results_single_plan.q_trajs_pos_valid[0].unsqueeze(0).movedim(1, 0)  # horizon, batch, D
+                q_trajs_pos = results_single_plan.q_trajs_pos_best.unsqueeze(0).movedim(1, 0)
                 isaacgym_statistics = motion_planning_controller_isaac_gym.execute_trajectories(
                     q_trajs_pos,
                     q_pos_starts=q_trajs_pos[0],
                     q_pos_goal=q_trajs_pos[-1][0],  # add steps for better visualization
                     n_pre_steps=5 if render_isaacgym_viewer or render_isaacgym_movie else 0,
                     n_post_steps=5 if render_isaacgym_viewer or render_isaacgym_movie else 0,
-                    stop_robot_if_in_contact=False, #Only valid trajectories are given
+                    stop_robot_if_in_contact=True, #Only valid trajectories are given
                     make_video=render_isaacgym_movie,
-                    video_duration=args_inference.trajectory_duration,
+                    video_duration=8, #args_inference.trajectory_duration, (not set for comp)
                     video_path=os.path.join(results_dir, f"isaacgym-{idx_sg:03d}.mp4"),
                     make_gif=False,
                 )
@@ -373,8 +422,8 @@ def experiment(
         ############################################################################################################
         # Render sampling results
         render_time = None 
-        if failed_dict is not None : 
-            render_time = failed_time_dict[idx_sg] if idx_sg in failed_idx else None
+        # if failed_dict is not None : 
+        #     render_time = failed_time_dict[idx_sg] if idx_sg in failed_idx else None
         
         comp_info = generative_optimization_planner.get_comp_animation_info()
         modified_args = args_inference if comp_info is None else args_inference.copy()

@@ -63,10 +63,48 @@ def set_object_position_and_orientation(obj_pos, obj_ori):
     obj_pose.r = gymapi.Quat(obj_ori[1], obj_ori[2], obj_ori[3], obj_ori[0])
     return obj_pose
 
-def get_object_pose(obj_list, **tensor_args) : 
-    result = torch.tensor([], **tensor_args)
+def get_object_pose(obj_list, env_center=None, **tensor_args) : 
+    # Place invalid objects far away instead of dropping them to keep indexing consistent.
+    # Push them outward from the environment center to avoid crossing the workspace.
+    if env_center is None:
+        env_center = torch.zeros(3, **tensor_args)
+    else:
+        env_center = torch.tensor(to_numpy(env_center), **tensor_args)
+        if env_center.numel() == 2:
+            env_center = torch.cat([env_center, torch.zeros(1, **tensor_args)])
+
+    poses = []
     for obj in obj_list or []:
         # get position and orientation
+        invalid_pose = obj.pos is None or torch.isnan(obj.pos).any() or torch.isinf(obj.pos).any()
+        invalid_pose = invalid_pose or obj.ori is None or torch.isnan(obj.ori).any() or torch.isinf(obj.ori).any()
+
+        if invalid_pose:
+            # Determine an outward direction; fall back to +X if degenerate
+            dir_vec = None
+            if obj.pos is not None and torch.isfinite(obj.pos).all():
+                dir_vec = obj.pos
+            elif obj.fields:
+                center_np = to_numpy(obj.fields[0].centers)
+                center_np = center_np.mean(axis=0)
+                if center_np.shape[-1] == 2:
+                    center_np = np.concatenate([center_np, [0.0]], axis=-1)
+                dir_vec = torch.tensor(center_np, **tensor_args)
+            if dir_vec is None or not torch.isfinite(dir_vec).all():
+                dir_vec = torch.tensor([1.0, 0.0, 0.0], **tensor_args)
+
+            dir_vec = dir_vec - env_center
+            norm = torch.linalg.norm(dir_vec)
+            if norm < 1e-6:
+                dir_vec = torch.tensor([1.0, 0.0, 0.0], **tensor_args)
+                norm = 1.0
+            dir_unit = dir_vec / norm
+            remote_position = env_center + dir_unit * 1e6
+            remote_pose = torch.cat([remote_position, torch.tensor([0.0, 0.0, 0.0, 1.0], **tensor_args)])
+            for field in obj.fields:
+                poses.append(remote_pose.repeat(field.centers.shape[0], 1))
+            continue
+
         obj_pos = to_numpy(obj.pos)
         obj_ori_mat = to_numpy(obj.ori)
         obj_ori_quat = to_numpy(rotation_matrix_to_q(obj.ori))
@@ -82,10 +120,12 @@ def get_object_pose(obj_list, **tensor_args) :
                                reps = [tmp_pos.shape[0], 1])
             tmp_pose = torch.tensor(np.concatenate([tmp_pos, tmp_quat], axis=-1), **tensor_args)
             #print(tmp_pose)
-            result = torch.cat([result, tmp_pose])
+            poses.append(tmp_pose)
     
-    #print("get_object_pose : ",result.shape)
-    return result
+    if len(poses) == 0:
+        return torch.empty((0, 7), **tensor_args)
+
+    return torch.cat(poses, dim=0)
     
 
 def create_isaac_assets_from_primitive_shapes(sim, gym, obj_list):
@@ -113,7 +153,7 @@ def create_isaac_assets_from_primitive_shapes(sim, gym, obj_list):
                         center = torch.cat([center, torch.zeros(1, dtype=center.dtype, device=center.device)])
                     center_np = to_numpy(center)
                     radius_np = to_numpy(radius)
-
+                    print(f"{radius_np=}")
                     # create sphere asset
                     sphere_radius = radius_np
                     asset_options = gymapi.AssetOptions()
@@ -520,7 +560,7 @@ class MotionPlanningIsaacGymEnv:
             env = self.gym.create_env(self.sim, env_lower, env_upper, num_per_row)
             self.envs.append(env)
 
-        offset = 0
+        self.initial_dyn_obj_states = torch.tensor([], **self.tensor_args)
 
         if self.is_dynamic :
             #actor_filter = {'robot' : 1, 'fix' : 2, 'dyn' : 2}
@@ -557,18 +597,19 @@ class MotionPlanningIsaacGymEnv:
                 self.map_rigid_body_idxs_to_env_idx[obj_idx] = i
 
             # Add dyn objects extra
-            self.initial_dyn_obj_states = torch.tensor([], **self.tensor_args)
             for obj_asset, obj_pose in zip(dyn_obj_extra_assets_l, dyn_obj_extra_poses_l):
                 object_handle = self.gym.create_actor(env, obj_asset, obj_pose, "dyn_obj_extra", i, obj_filter)  
                 obj_tensor = transform_to_tensor(obj_pose, **self.tensor_args) # tensor ndim=1
-                self.initial_dyn_obj_states = torch.cat([self.initial_dyn_obj_states, obj_tensor.unsqueeze(0)]) 
+                if i == 0:
+                    # Store template state once (will be repeated for each env during reset/step)
+                    self.initial_dyn_obj_states = torch.cat([self.initial_dyn_obj_states, obj_tensor.unsqueeze(0)]) 
                 self.gym.set_rigid_body_color(env, object_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color_obj_extra)
                 # get global index of object in rigid body state tensor
                 obj_idx = self.gym.get_actor_rigid_body_index(env, object_handle, 0, gymapi.DOMAIN_SIM)
-                #print("3",obj_idx)
                 self.obj_idxs.append(obj_idx)
                 self.map_rigid_body_idxs_to_env_idx[obj_idx] = i
-                self.dyn_obj_idxs.append(obj_idx - offset)
+                actor_idx = self.gym.get_actor_index(env, object_handle, gymapi.DOMAIN_SIM)
+                self.dyn_obj_idxs.append(actor_idx)
 
             # Add the robot
             # Set to 0 to enable self-collision.
@@ -586,8 +627,6 @@ class MotionPlanningIsaacGymEnv:
                 rb_idx = self.gym.get_actor_rigid_body_index(env, robot_handle, j, gymapi.DOMAIN_SIM)
                 #print("4",rb_idx)
                 self.map_rigid_body_idxs_to_env_idx[rb_idx] = i
-                
-            offset += len(rb_names) - 1 # remove idx from robot_handle
 
             # color robot
             n_rigid_bodies = self.gym.get_actor_rigid_body_count(env, robot_handle)
@@ -621,7 +660,7 @@ class MotionPlanningIsaacGymEnv:
         # point camera at middle env
         if camera_global_from_top:
             cam_pos = gymapi.Vec3(1e-3, -1e-3, 1.90)
-            cam_target = gymapi.Vec3(0, -1e-3, -1)
+            cam_target = gymapi.Vec3(0.5, -1e-3, -1)
 
         if len(self.envs) == 1:
             self.middle_env = self.envs[0]
@@ -815,12 +854,17 @@ class MotionPlanningIsaacGymEnv:
                 obj_idxs_int32 = torch.tensor(self.dyn_obj_idxs).to(dtype=torch.int32)
                 root_states_aux = self.initial_root_states.clone() #should be tensor
                 # update with respect to the environment
+                # print(f"{len(self.dyn_obj_idxs)=}")
                 self.env_tr._update_moving_objects_at_time(obj_time)
-                object_pose = get_object_pose(self.env_tr.obj_extra_list, **self.tensor_args)
+                # print("finished update_moving_objects")
+                env_center = self.env_tr.limits.mean(dim=0) if hasattr(self.env_tr, "limits") else None
+                object_pose = get_object_pose(self.env_tr.obj_extra_list, env_center=env_center, **self.tensor_args)
+                # print(f" is object_pose has nan : ", torch.isnan(object_pose).any())
                 #assume object indexs are not mixed
                 # num_envs = self.num_envs -1 if self.draw_goal_configuration else self.num_envs
+                # print(f"{object_pose.shape=}, {self.num_envs}")
                 num_envs = self.num_envs
-                root_states_aux[self.dyn_obj_idxs, 0:7] = object_pose.repeat(num_envs, 1)
+                root_states_aux[self.dyn_obj_idxs, 0:7] = object_pose.repeat(num_envs, 1)             
                 self.gym.set_actor_root_state_tensor_indexed(
                     self.sim, 
                     gymtorch.unwrap_tensor(root_states_aux),
@@ -834,7 +878,7 @@ class MotionPlanningIsaacGymEnv:
 
         ###############################################################################################################
         # Step the simulation physics forward
-        for _ in range(10):
+        for _ in range(6) : #range(10):
             self.gym.simulate(self.sim)
         self.gym.fetch_results(self.sim, True)
 
@@ -939,26 +983,26 @@ class MotionPlanningIsaacGymEnv:
         robot_handles = self.robot_handles
 
         envs_with_robot_in_contact = []
-        for env, robot_handle in zip(envs, robot_handles):
+        for env_idx, (env, robot_handle) in enumerate(zip(envs, robot_handles)):
             rigid_contacts = self.gym.get_env_rigid_contacts(env)
             if self.all_robots_in_one_env:
                 for contact in rigid_contacts:
-                    body1_idx = contact[2]
-                    env_idx = self.map_rigid_body_idxs_to_env_idx[body1_idx]
-                    # discard env_idx if it is not in the selected environments
-                    # the environments are selected sequentially
-                    if env_idx > len(envs) - 1:
-                        continue
-                    if env_idx in envs_with_robot_in_contact:
-                        pass
-                    else:
-                        envs_with_robot_in_contact.append(env_idx)
+                    body_indices = []
+                    if len(contact) > 2:
+                        body_indices.append(contact[2])
+                    if len(contact) > 3:
+                        body_indices.append(contact[3])
+                    for body_idx in body_indices:
+                        mapped_env_idx = self.map_rigid_body_idxs_to_env_idx.get(body_idx, None)
+                        # discard env_idx if it is not in the selected environments
+                        # the environments are selected sequentially
+                        if mapped_env_idx is None or mapped_env_idx > len(envs) - 1:
+                            continue
+                        if mapped_env_idx not in envs_with_robot_in_contact:
+                            envs_with_robot_in_contact.append(mapped_env_idx)
             else:
                 if len(rigid_contacts) > 0:
-                    env_idx = rigid_contacts[0][0]
-                    if env_idx in envs_with_robot_in_contact:
-                        pass
-                    else:
+                    if env_idx not in envs_with_robot_in_contact:
                         envs_with_robot_in_contact.append(env_idx)
         return envs_with_robot_in_contact
 

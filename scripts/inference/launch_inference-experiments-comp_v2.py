@@ -52,8 +52,8 @@ launcher = Launcher(
 # (config_file, env extra)
 config_files_bspline_extraobjectsenv_l = [
     #("./cfgs/config_EnvDense2D-RobotPointMass2D_00.yaml", "EnvDynDense2DExtraObjects")
-    ("./cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml", "EnvDynSimple2DExtraObjects"),
-    # ("./cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml", "EnvSimple2DExtraObjectsV00"),
+    # ("./cfgs/config_EnvSimple2D-RobotPointMass2D_comp_v2.yaml", "EnvDynSimple2DExtraObjects"),
+    ("./cfgs/config_EnvSimple2D-RobotPointMass2D_comp_v2.yaml", "EnvSimple2DExtraObjectsV00"),
     # ("./cfgs/config_EnvNarrowPassageDense2D-RobotPointMass2D_00.yaml", "EnvNarrowPassageDense2DExtraObjectsV00"),
     # ("./cfgs/config_EnvPlanar2Link-RobotPlanar2Link_00.yaml", "EnvPlanar2LinkExtraObjectsV00"),
     # ("./cfgs/config_EnvPlanar4Link-RobotPlanar4Link_00.yaml", "EnvPlanar4LinkExtraObjectsV00"),
@@ -75,7 +75,9 @@ project_gradient_hierarchy_l = [
 ]
 
 
-trajectory_duration = 10.0
+# trajectory_duration = 3.3 # ncomp 4
+# trajectory_duration = 4.2  # ncomp 3# sml trajectory duration
+trajectory_duration = 6 # ncomp 2 
 n_trajectory_samples = 20 #100
 
 n_start_goal_states = 100 #100
@@ -85,7 +87,7 @@ default_options = OrderedDict(
     render_joint_space_time_iters=False,
     render_joint_space_env_iters=False, 
     render_env_robot_opt_iters=False, # no use for dynamic 
-    render_env_robot_trajectories=False,
+    render_env_robot_trajectories=True,
     render_pybullet=False,
     draw_collision_spheres=False,
     run_evaluation_issac_gym=False,
@@ -102,86 +104,10 @@ os.makedirs("./cfgs/tmp", exist_ok=True)
 exp_id = 0
 
 ########################################################################################################################
-# NON-DIFFUSION
-# planner_alg_l = [
-#     # prior only
-#     "cvae",
-#     # prior and guide
-#     "gp_prior_then_guide",
-#     "cvae_prior_then_guide",
-# ]
-
-# for (
-#     config_files_bspline_extraobjectsenv,
-#     extra_objects,
-#     phase_time_class,
-#     planner_alg,
-#     project_gradient_hierarchy,
-# ) in product(
-#     config_files_bspline_extraobjectsenv_l,
-#     extra_objects_l,
-#     phase_time_class_l,
-#     planner_alg_l,
-#     project_gradient_hierarchy_l,
-# ):
-
-#     # create a temporary config file
-#     cfg_file = config_files_bspline_extraobjectsenv[0]
-#     extraobjects_env = config_files_bspline_extraobjectsenv[1]
-#     # read the base config file from a yaml file
-#     with open(cfg_file, "r") as fp:
-#         cfg_base = yaml.safe_load(fp)
-
-#     # update the config file
-#     if not LOCAL:
-#         for model_dir in ["model_dir_ddpm_bspline", "model_dir_cvae_bspline", "model_dir_ddpm_waypoints"]:
-#             cfg_base[model_dir] = "/mnt/beegfs" + cfg_base[model_dir]
-
-#     with open(os.path.join(cfg_base["model_dir_ddpm_bspline"], "args.yaml"), "r") as fp:
-#         model_dir_ddpm_args = yaml.safe_load(fp)
-#         dataset_subdir = model_dir_ddpm_args["dataset_subdir"]
-
-#     if extra_objects:
-#         cfg_base["env_id_replace"] = extraobjects_env
-#     else:
-#         cfg_base["env_id_replace"] = None
-#     cfg_base["phase_time_class"] = phase_time_class
-#     cfg_base["planner_alg"] = planner_alg
-#     cfg_base["project_gradient_hierarchy"] = project_gradient_hierarchy
-#     cfg_base["trajectory_duration"] = trajectory_duration
-#     cfg_base["n_trajectory_samples"] = n_trajectory_samples
-
-#     # save the new config file
-#     cfg_file_stem = Path(cfg_file).stem
-#     cfg_file_path_tmp = os.path.join("./cfgs/tmp", f"{cfg_file_stem}-{exp_id:04d}.yaml")
-#     with open(cfg_file_path_tmp, "w") as fp:
-#         yaml.dump(cfg_base, fp)
-
-#     launcher.add_experiment(
-#         # dummy variables for subfolders
-#         dataset_subdir__=dataset_subdir,
-#         selection_start_goal__="validation",
-#         extra_objects__=extra_objects,
-#         planner_alg__=planner_alg,
-#         phase_time_class__=phase_time_class,
-#         project_gradient_hierarchy__=project_gradient_hierarchy,
-#         trajectory_duration__=trajectory_duration,
-#         cfg_inference_path=cfg_file_path_tmp,
-#         n_start_goal_states=n_start_goal_states,
-#         device="cuda:0",
-#         debug=False,
-#         # Visualization options
-#         **default_options,
-#     )
-
-#     exp_id += 1
-
-
-########################################################################################################################
 # DIFFUSION
 
 model_selection_l = [
-    "bspline",
+    # "bspline",
     "waypoints",
 ]
 
@@ -190,7 +116,7 @@ planner_alg_l = [
     #"diffusion_prior",
     # prior and guide
     #"diffusion_prior_then_guide",
-    "mpd",
+    "mpd_comp",
 ]
 
 diffusion_sampling_method_l = [
@@ -203,35 +129,100 @@ n_diffusion_steps_without_noise_l = [
     # 1
 ]
 
-difficulty_l = [
-    False,
-    # True,
+network_config_l = [
+    # OrderedDict(guide_mode__ = "cfg",
+    #             n_comp__ = 3,
+    #             len_ovlp_cd__ = 8,
+    #             use_end_ovlp_model__ = True,
+    #             context_progress__ = True, 
+    #             global_context_qs__ = True,
+    #             global_context_ee_goal_pose__ = False,
+    #             condition_guidance_l__ = 1.5,
+    #             condition_guidance_g__ = 0.5,
+    #             lambda_l__ = 1.0,
+    #             lambda_g__ = 0.5,
+    #             ),
+    # OrderedDict(guide_mode__ = "cfg",
+    #             n_comp__ = 3,
+    #             len_ovlp_cd__ = 8,
+    #             use_end_ovlp_model__ = True,
+    #             context_progress__ = True, 
+    #             global_context_qs__ = True,
+    #             global_context_ee_goal_pose__ = False,
+    #             condition_guidance_l__ = 3.0,
+    #             condition_guidance_g__ = 0.5,
+    #             lambda_l__ = 1.0,
+    #             lambda_g__ = 0.5,
+    #             ),
+    # OrderedDict(guide_mode__ = "cfg",
+    #             n_comp__ = 2,
+    #             len_ovlp_cd__ = 8,
+    #             use_end_ovlp_model__ = True,
+    #             context_progress__ = True, 
+    #             global_context_qs__ = True,
+    #             global_context_ee_goal_pose__ = False,
+    #             condition_guidance_l__ = 1.5,
+    #             condition_guidance_g__ = 0.3,
+    #             # lambda_l__ = 1.0,
+    #             # lambda_g__ = 0.5,
+    #             ),
+    OrderedDict(guide_mode__ = "hybrid",
+                n_comp__ = 3,
+                len_ovlp_cd__ = 8,
+                use_end_ovlp_model__ = True,
+                context_progress__ = True, 
+                global_context_qs__ = True,
+                global_context_ee_goal_pose__ = False,
+                condition_guidance_l__ = 1.5, #1.5,
+                condition_guidance_g__ = 0.3, #0.5,
+                # lambda_l__ = 1.0,
+                # lambda_g__ = 0.5,
+                ),
+    # OrderedDict(guide_mode__ = "hybrid",
+    #             n_comp__ = 3,
+    #             len_ovlp_cd__ = 8,
+    #             use_end_ovlp_model__ = True,
+    #             context_progress__ = True, 
+    #             global_context_qs__ = True,
+    #             global_context_ee_goal_pose__ = False,
+    #             condition_guidance_l__ = 3.0,
+    #             condition_guidance_g__ = 0.5,
+    #             # lambda_l__ = 1.0,
+    #             # lambda_g__ = 0.5,
+    #             ),
 ]
 
+
+difficulty_l = [
+    # False,
+    True,
+]
 for (
     config_files_bspline_extraobjectsenv,
     extra_objects,
     model_selection,
     phase_time_class,
     planner_alg,
+    network_config, 
     diffusion_sampling_method,
     n_diffusion_steps_without_noise,
     project_gradient_hierarchy,
-    difficulty,
+    difficulty
 ) in product(
     config_files_bspline_extraobjectsenv_l,
     extra_objects_l,
     model_selection_l,
     phase_time_class_l,
     planner_alg_l,
+    network_config_l,
     diffusion_sampling_method_l,
     n_diffusion_steps_without_noise_l,
     project_gradient_hierarchy_l,
-    difficulty_l,
+    difficulty_l
 ):
 
     # Skipping options
-    if planner_alg != "mpd" and model_selection == "waypoints":
+    if planner_alg not in ["mpd", "mpd_comp"] and model_selection == "waypoints":
         # skip waypoints for planners that are not mpd
         continue
 
@@ -265,10 +256,14 @@ for (
     cfg_base["project_gradient_hierarchy"] = project_gradient_hierarchy
     cfg_base["trajectory_duration"] = trajectory_duration
     cfg_base["n_trajectory_samples"] = n_trajectory_samples
-
     cfg_base["is_hard"] = difficulty
     if difficulty :
         cfg_base['eval_dataset_path'] = "/home/sisrel/pjw/mpd-splines-public/data_trajectories/EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/problem_configs_hard.json"
+
+    if extraobjects_env == "EnvSimple2DExtraObjectsV00": 
+        cfg_base['eval_dataset_path'] = "/home/sisrel/pjw/mpd-splines-public/data_trajectories/EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/problem_configs_static.json"
+    for k, v in network_config.items():
+        cfg_base["comp"][k[:-2]] = v # split underscore
 
     # save the new config file
     cfg_file_stem = Path(cfg_file).stem
@@ -280,7 +275,7 @@ for (
         # exp_id__=exp_id,
         # dummy variables for subfolders
         dataset_subdir__=dataset_subdir,
-        selection_start_goal__= "validation",# "test", # "validation",
+        selection_start_goal__= "test", # "test", #"validation",
         extra_objects__=extra_objects,
         planner_alg__=planner_alg,
         model_selection__=model_selection,
@@ -290,6 +285,7 @@ for (
         project_gradient_hierarchy__=project_gradient_hierarchy,
         trajectory_duration__=trajectory_duration,
         is_hard__=difficulty,
+        **network_config, 
         cfg_inference_path=cfg_file_path_tmp,
         n_start_goal_states=n_start_goal_states,
         device="cuda:0",

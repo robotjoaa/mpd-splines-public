@@ -196,6 +196,7 @@ class MultiSphereField(PrimitiveShapeField):
         return torch.linalg.norm(p - center) <= radius
 
     def render(self, ax, pos=None, ori=None, color="gray", cmap="gray", **kwargs):
+        
         for center, radius in zip(self.centers, self.radii):
             center = to_numpy(center)
             radius = to_numpy(radius)
@@ -207,6 +208,7 @@ class MultiSphereField(PrimitiveShapeField):
             if ax.name == "3d":
                 plot_sphere(ax, center, pos, radius, cmap)
             else:
+                # print("primitive: ",center[0] + pos[0], center[1] + pos[1])
                 circle = plt.Circle((center[0] + pos[0], center[1] + pos[1]), radius, color=color, linewidth=0, alpha=1)
                 ax.add_patch(circle)
 
@@ -682,6 +684,7 @@ class ObjectField(PrimitiveShapeField):
                 pos = self.pos
             if ori is None:
                 ori = self.ori
+            # print(f"object_field {self.name} render : ",self.pos)
             field.render(ax, pos=pos, ori=ori, color=color, **kwargs)
 
     def add_to_occupancy_map(self, occ_map):

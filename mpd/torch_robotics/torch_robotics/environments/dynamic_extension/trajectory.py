@@ -5,7 +5,7 @@ from typing import List, Callable, Optional
 from torch_robotics.environments.primitives import ObjectField, MultiSphereField, MultiBoxField
 #from torch_robotics.environments.dynamic_extension.moving_primitives import MovingObjectField
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
-
+import pdb
 
 '''
     Migrated from pb_diff
@@ -127,16 +127,16 @@ class TrajectoryInterpolator:
     Base class for trajectory interpolation methods.
     """
     
-    def __call__(self, t, **kwargs):
+    def __call__(self, t, get_state=("pos", "ori"), **kwargs):
         """
         Get position and orientation at time t.
 
         Args:
             t: Time value (scalar or tensor)
+            get_state: tuple of states to return. Supports "pos", "ori", "vel".
 
         Returns:
-            pos: Position, shape (3,) or (batch, 3)
-            ori: Orientation matrix, shape (3, 3) or (batch, 3, 3)
+            Tuple of requested states in the same order as get_state.
         """
         raise NotImplementedError
 
@@ -172,22 +172,22 @@ class LinearTrajectory(TrajectoryInterpolator):
 
     def get_velocity(self):
         """
-        Get average velocity for linear trajectory (simple case: 2 keyframes).
+        Get per-segment velocity for the trajectory.
 
         Returns:
-            velocity: Velocity vector, shape (3,)
+            velocity: If single segment -> shape (3,); otherwise shape (num_segments, 3)
         """
-        if len(self.keyframe_times) == 2:
-            # Simple linear trajectory: v = (pos1 - pos0) / (t1 - t0)
-            dt = self.keyframe_times[1] - self.keyframe_times[0]
-            dpos = self.keyframe_positions[1] - self.keyframe_positions[0]
-            return dpos / (dt + 1e-8)
-        else:
-            # Needs change
-            # Multi-segment: return average velocity
-            dt = self.keyframe_times[-1] - self.keyframe_times[0]
-            dpos = self.keyframe_positions[-1] - self.keyframe_positions[0]
-            return dpos / (dt + 1e-8)
+        if len(self.keyframe_times) < 2:
+            return torch.zeros_like(self.keyframe_positions[0])
+
+        dt = self.keyframe_times[1:] - self.keyframe_times[:-1]
+        dpos = self.keyframe_positions[1:] - self.keyframe_positions[:-1]
+        velocities = dpos / (dt.unsqueeze(-1) + 1e-8)
+
+        # Preserve backward compatibility for the single-segment case
+        if velocities.shape[0] == 1:
+            return velocities[0]
+        return velocities
 
     def get_start_position(self):
         """
@@ -198,16 +198,16 @@ class LinearTrajectory(TrajectoryInterpolator):
         """
         return self.keyframe_positions[0]
 
-    def __call__(self, t):
+    def __call__(self, t, get_state=("pos", "ori")):
         """
         Linear interpolation of position and orientation.
 
         Args:
             t: Time value (scalar or tensor)
+            get_state: tuple of states to return. Supports "pos", "ori", "vel".
 
         Returns:
-            pos: Position, shape (3,) or (batch, 3)
-            ori: Orientation matrix, shape (3, 3) or (batch, 3, 3)
+            Tuple of requested states in the same order as get_state.
         """
         # Convert t to tensor if needed
         if not isinstance(t, torch.Tensor):
@@ -251,11 +251,26 @@ class LinearTrajectory(TrajectoryInterpolator):
         # This is a simple approach; for better results use SLERP
         ori = self._orthonormalize_rotation(ori)
 
+        # Velocity is constant within each segment
+        if "vel" in get_state:
+            velocities = self.get_velocity()
+            if velocities.ndim == 1:
+                vel = velocities.expand_as(pos)
+            else:
+                vel = velocities[idx_low]
+        else:
+            vel = None
+
         if is_scalar:
             pos = pos.squeeze(0)
             ori = ori.squeeze(0)
+            if vel is not None:
+                vel = vel.squeeze(0)
 
-        return pos, ori
+        state_map = {"pos": pos, "ori": ori}
+        if vel is not None:
+            state_map["vel"] = vel
+        return tuple(state_map[s] for s in get_state)
 
     @staticmethod
     def _orthonormalize_rotation(R):
@@ -307,16 +322,16 @@ class CircularTrajectory(TrajectoryInterpolator):
         self.initial_phase = float(initial_phase)
         self.axis = axis
 
-    def __call__(self, t):
+    def __call__(self, t, get_state=("pos", "ori")):
         """
         Compute position on circular trajectory.
 
         Args:
             t: Time value (scalar or tensor)
+            get_state: tuple of states to return. Supports "pos", "ori", "vel".
 
         Returns:
-            pos: Position, shape (3,) or (batch, 3)
-            ori: Orientation matrix (identity), shape (3, 3) or (batch, 3, 3)
+            Tuple of requested states in the same order as get_state.
         """
         if not isinstance(t, torch.Tensor):
             t = torch.tensor(t, **self.tensor_args)
@@ -353,11 +368,34 @@ class CircularTrajectory(TrajectoryInterpolator):
         batch_size = t.shape[0]
         ori = torch.eye(3, **self.tensor_args).unsqueeze(0).repeat(batch_size, 1, 1)
 
+        # Velocity (optional) for outward direction estimation; derivative of circular motion
+        if "vel" in get_state:
+            if self.axis == 'z':
+                vx = -self.radius * self.angular_velocity * torch.sin(angle)
+                vy = self.radius * self.angular_velocity * torch.cos(angle)
+                vz = torch.zeros_like(vx)
+            elif self.axis == 'y':
+                vx = -self.radius * self.angular_velocity * torch.sin(angle)
+                vy = torch.zeros_like(vx)
+                vz = self.radius * self.angular_velocity * torch.cos(angle)
+            elif self.axis == 'x':
+                vx = torch.zeros_like(angle)
+                vy = -self.radius * self.angular_velocity * torch.sin(angle)
+                vz = self.radius * self.angular_velocity * torch.cos(angle)
+            vel = torch.stack([vx, vy, vz], dim=-1)
+        else:
+            vel = None
+
         if is_scalar:
             pos = pos.squeeze(0)
             ori = ori.squeeze(0)
+            if vel is not None:
+                vel = vel.squeeze(0)
 
-        return pos, ori
+        state_map = {"pos": pos, "ori": ori}
+        if vel is not None:
+            state_map["vel"] = vel
+        return tuple(state_map[s] for s in get_state)
 
 
 class WaypointTrajectory(TrajectoryInterpolator):
@@ -432,7 +470,7 @@ class WaypointTrajectory(TrajectoryInterpolator):
         self.t_min = self.time_steps[0]
         self.t_max = self.time_steps[-1]
 
-    def __call__(self, t, obstacle_indices=None, clamp=True):
+    def __call__(self, t, obstacle_indices=None, clamp=True, get_state=("pos", "ori")):
         """
         Query obstacle states at time t with linear interpolation.
 
@@ -444,11 +482,7 @@ class WaypointTrajectory(TrajectoryInterpolator):
                   If False, extrapolates linearly beyond range
 
         Returns:
-            states: Dictionary containing:
-                - 'positions': [batch_t, N, 2] or [N, 2] if t is scalar
-                - 'velocities': [batch_t, N, 2] or [N, 2] if t is scalar
-                - 'orientations': [batch_t, N, 2] or [N, 2] if t is scalar (cos, sin)
-                where N is number of queried obstacles
+            Tuple of requested states in the same order as get_state.
         """
         # Convert t to tensor
         if not isinstance(t, torch.Tensor):
@@ -515,33 +549,36 @@ class WaypointTrajectory(TrajectoryInterpolator):
 
         # Since we only support single obstacle (n_obstacles == 1), extract that obstacle
         # positions: [N, 2] or [batch_t, N, 2]
-        # Need to return (pos, ori) matching TrajectoryInterpolator interface
-
         if is_scalar_t:
-            # Single timestep: positions is [1, 2]
-            pos_2d = positions  # [2]
-            ori_2x2 = orientations  # [2] (cos, sin)
+            # Single timestep: positions is [2]
+            pos_2d = positions.squeeze(0)  # [2]
+            ori_2x2 = orientations.squeeze(0)  # [2] (cos, sin)
+            vel_2d = velocities.squeeze(0)  # [2]
         else:
             # Multiple timesteps: positions is [batch_t, 1, 2]
             pos_2d = positions.squeeze(1)  # [batch_t, 2]
             ori_2x2 = orientations.squeeze(1)  # [batch_t, 2] (cos, sin)
+            vel_2d = velocities.squeeze(1)  # [batch_t, 2]
 
-        # Pad 2D positions to 3D (add z=0)
+        # Pad 2D positions/velocities to 3D (add z=0)
         if is_scalar_t:
             pos = torch.cat([pos_2d, torch.zeros(1, **self.tensor_args)])  # [3]
+            vel = torch.cat([vel_2d, torch.zeros(1, **self.tensor_args)])  # [3]
         else:
             pos = torch.cat([pos_2d, torch.zeros(pos_2d.shape[0], 1, **self.tensor_args)], dim=1)  # [batch_t, 3]
+            vel = torch.cat([vel_2d, torch.zeros(vel_2d.shape[0], 1, **self.tensor_args)], dim=1)  # [batch_t, 3]
 
         # Convert (cos, sin) to 3x3 rotation matrix
         # For 2D rotation around z-axis: R = [[cos, -sin, 0], [sin, cos, 0], [0, 0, 1]]
         if is_scalar_t:
             cos_theta = ori_2x2[0]
             sin_theta = ori_2x2[1]
-            ori = torch.tensor([
-                [cos_theta, -sin_theta, 0],
-                [sin_theta, cos_theta, 0],
-                [0, 0, 1]
-            ], **self.tensor_args)  # [3, 3]
+            ori = torch.zeros(3, 3, **self.tensor_args)
+            ori[0, 0] = cos_theta
+            ori[0, 1] = -sin_theta
+            ori[1, 0] = sin_theta
+            ori[1, 1] = cos_theta
+            ori[2, 2] = 1.0  # [3, 3]
         else:
             # Batch version
             batch_size = pos_2d.shape[0]
@@ -555,7 +592,8 @@ class WaypointTrajectory(TrajectoryInterpolator):
             ori[:, 1, 1] = cos_theta
             ori[:, 2, 2] = 1.0  # [batch_t, 3, 3]
 
-        return pos, ori
+        state_map = {"pos": pos, "ori": ori, "vel": vel}
+        return tuple(state_map[s] for s in get_state)
 
     def get_start_position(self, obstacle_indices=None):
         """
@@ -763,12 +801,11 @@ if __name__ == '__main__':
     print("-" * 80)
 
     t_query = 3.5
-    states = interp(t_query)
+    pos_q, ori_q, vel_q = interp(t_query, get_state=("pos", "ori", "vel"))
 
     print(f"\n  Query time: {t_query}s")
-    print(f"  Positions shape: {states['positions'].shape}")
-    print(f"  Positions:\n{states['positions'].numpy()}")
-    print(f"  Velocities:\n{states['velocities'].numpy()}")
+    print(f"  Position:\n{pos_q.numpy()}")
+    print(f"  Velocity:\n{vel_q.numpy()}")
 
     # Test 3: Query multiple times (batched)
     print("\n" + "-" * 80)
@@ -776,25 +813,12 @@ if __name__ == '__main__':
     print("-" * 80)
 
     t_batch = torch.tensor([0.0, 2.0, 4.0, 6.0])
-    states_batch = interp(t_batch)
+    pos_batch, _, _ = interp(t_batch, get_state=("pos", "ori", "vel"))
 
     print(f"\n  Query times: {t_batch.numpy()}")
-    print(f"  Positions shape: {states_batch['positions'].shape}")
+    print(f"  Positions shape: {pos_batch.shape}")
     print(f"  First obstacle positions at queried times:")
-    print(f"{states_batch['positions'][:, 0, :].numpy()}")
-
-    # Test 4: Query specific obstacles
-    print("\n" + "-" * 80)
-    print("Test 4: Query specific obstacles")
-    print("-" * 80)
-
-    obs_indices = [0, 2]  # Query only obstacles 0 and 2
-    states_subset = interp(t_query, obstacle_indices=obs_indices)
-
-    print(f"\n  Query time: {t_query}s")
-    print(f"  Obstacle indices: {obs_indices}")
-    print(f"  Positions shape: {states_subset['positions'].shape}")
-    print(f"  Positions:\n{states_subset['positions'].numpy()}")
+    print(f"{pos_batch.numpy()}")
 
     # Test 5: Convenience methods
     print("\n" + "-" * 80)
@@ -813,11 +837,11 @@ if __name__ == '__main__':
     print("-" * 80)
 
     t_out_of_bounds = 100.0  # Way beyond horizon
-    states_clamped = interp(t_out_of_bounds, clamp=True)
+    pos_clamped, _, _ = interp(t_out_of_bounds, clamp=True, get_state=("pos", "ori", "vel"))
 
     print(f"\n  Query time: {t_out_of_bounds}s (beyond horizon)")
     print(f"  Valid time range: [{interp.t_min:.2f}, {interp.t_max:.2f}]")
-    print(f"  With clamping - positions:\n{states_clamped['positions'].numpy()}")
+    print(f"  With clamping - positions:\n{pos_clamped.numpy()}")
 
     # Test 7: Initialize with tensor (batched format)
     print("\n" + "-" * 80)
@@ -830,11 +854,11 @@ if __name__ == '__main__':
     print(f"  Input shape: {traj_tensor.shape}")
     print(f"  {interp_tensor}")
 
-    states_tensor = interp_tensor(t_query)
-    print(f"  Query result shape: {states_tensor['positions'].shape}")
+    pos_tensor, _, _ = interp_tensor(t_query, get_state=("pos", "ori", "vel"))
+    print(f"  Query result shape: {pos_tensor.shape}")
 
     # Verify results match
-    diff = torch.abs(states['positions'] - states_tensor['positions']).max()
+    diff = torch.abs(pos_q - pos_tensor).max()
     print(f"  Max difference from list version: {diff.item():.2e}")
 
     print("\n" + "=" * 80)

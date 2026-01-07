@@ -21,10 +21,12 @@ grasped_object: null
 obstacle_cutoff_margin_extra: 0.02
 # Points whose distance to the objects is less than this margin are considered in collision
 margin_for_dense_collision_checking:  0.0
+# evaluation path
+eval_dataset_path: '/home/sisrel/pjw/mpd-splines-public/data_trajectories/EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect/problem_configs.json'
 
 # margin, gradient scales 
 moving_object_margin_scale: 4.0
-moving_object_gradient_scale: 100.0
+moving_object_gradient_scale: 1.0
 #######################################################################################################################
 # task options
 
@@ -43,7 +45,7 @@ costs:
   CostJointSpaceJointLimits:
     weight: 1.0
   CostJointSpaceVelocity:
-    weight: 0.01
+    weight: 0.1
   CostJointSpaceAcceleration:
     weight: 0.001
 

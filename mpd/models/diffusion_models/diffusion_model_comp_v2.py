@@ -306,7 +306,7 @@ class CompDiffusionModelv2(CompDiffusionModel):
                         grad_total = grad_prior_weighted - (1 - alpha).sqrt() * grad_guide_clipped_weighted
                     else:
                         grad_total = grad_prior_weighted - grad_guide_clipped_weighted
-
+                    # print(f'{grad_prior=}, {grad_guide_clipped=}, {grad_total=}')
                     x_tmp, x_recon = update_x(x, grad_total)
                     # Clip the perturbation to avoid large changes from x_start_opt
                     x_delta = x_tmp - x_start
@@ -416,6 +416,7 @@ class CompDiffusionModelv2(CompDiffusionModel):
             sample = self.gen_cond_stgl(g_cond, 
                                         context_d, 
                                         batch_size=n_samples,
+                                        return_chain=return_chain,
                                         pick_type="all",
                                         **diffusion_kwargs,
                                         )
@@ -847,7 +848,7 @@ class CompDiffusionModelv2(CompDiffusionModel):
                       batch_size=1,
                       n_comp=2,
                       horizon=None,
-                      return_chain=True,
+                      return_chain=False,
                       pick_type="first",
                       top_n=1,  
                       results_ns = None,
@@ -959,9 +960,11 @@ class CompDiffusionModelv2(CompDiffusionModel):
         
         if results_ns : 
             trajs_list_topn_q_trajs = self.tj_blder.get_local_q_trajs(trajs_list_topn, device)
+            # Keep logging artifacts on CPU to avoid holding large GPU tensors during inference.
+            trajs_list_topn_cpu = {k: v.detach().cpu() for k, v in trajs_list_topn_q_trajs.items()}
             
             results_ns.update(
-                trajs_list_topn =  trajs_list_topn_q_trajs,
+                trajs_list_topn =  trajs_list_topn_cpu,
                 trajs_info = self.tj_blder.trajs_info
                 # trajs_list_topn_bl = trajs_list_topn_bl,
                 # trajs_list = trajs_list 
@@ -1003,7 +1006,7 @@ class CompDiffusionModelv2(CompDiffusionModel):
 
         x_p_list = [ torch.randn(shape, device=device) for _ in range(n_comp) ]
 
-        x_dfu_all = [x_p_list,]
+        x_dfu_all = [x_p_list,] if return_chain else None
 
         # assert len(hard_conds[0]) == shape[0]
 

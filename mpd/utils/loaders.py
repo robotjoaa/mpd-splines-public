@@ -33,12 +33,64 @@ def get_problem_config(
 
         res_dict = {}
         key_l = ['problems', 'n_scenarios', 'n_problems_per_scenario']
+
         for k in key_l : 
             res_dict[k] = eval_data[k]
 
         return res_dict
 
     ### TODO : load problems configuration from the problem dir 
+    elif "EnvSimple2DExtraObjectsV00" == kwargs.get('env_id_replace') : 
+        eval_dataset_path = kwargs.get('eval_dataset_path') # json 
+        import json
+        with open(eval_dataset_path, 'rb') as f:
+            eval_data = json.load(f)
+
+
+        res_dict = {}
+        problem_list = []
+        prob_list = eval_data['problems']
+        for p in prob_list : 
+            tmp_dict = {}
+            tmp_dict['q_start'] = p['q_pos_start']
+            tmp_dict['q_goal'] = p['q_pos_goal']
+            # tmp_dict['dyn_obj_config'] = p['dyn_obj_config']
+            # for k, v in prob_list['dyn_obj_config'] : 
+            #     for k_, v_ in v: 
+            #         tmp_dict['dyn_obj_config'][k] 
+            problem_list.append(tmp_dict)
+        res_dict['problems'] = problem_list
+        res_dict['n_scenarios'] = len(eval_data['problems'])
+        return res_dict
+
+
+    elif 'Simple2D' in kwargs.get('env_id_replace') : 
+
+        eval_dataset_path = kwargs.get('eval_dataset_path') # json 
+        import json
+        with open(eval_dataset_path, 'rb') as f:
+            eval_data = json.load(f)
+
+
+        res_dict = {}
+        problem_list = []
+        prob_list = eval_data['problems']
+        for p in prob_list : 
+            tmp_dict = {}
+            tmp_dict['q_start'] = p['q_pos_start']
+            tmp_dict['q_goal'] = p['q_pos_goal']
+            tmp_dict['dyn_obj_config'] = p['dyn_obj_config']
+            # for k, v in prob_list['dyn_obj_config'] : 
+            #     for k_, v_ in v: 
+            #         tmp_dict['dyn_obj_config'][k] 
+            problem_list.append(tmp_dict)
+        res_dict['problems'] = problem_list
+        res_dict['n_scenarios'] = len(eval_data['problems'])
+
+        return res_dict
+    
+    
+
     return None
 
 def get_planning_task_and_dataset(
@@ -82,7 +134,6 @@ def get_planning_task_and_dataset(
     # Environment
     env_class = getattr(environments, env_id_replace if env_id_replace else dataset_args["env_id"])
     env = env_class(**kwargs, tensor_args=tensor_args)
-
     # Robot
     robot_class = getattr(robots, dataset_args["robot_id"])
     # optionally attach a grasped object
